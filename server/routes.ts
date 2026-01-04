@@ -32,44 +32,82 @@ function getUserId(req: Request): string {
   return user?.claims?.sub;
 }
 
-// AI analysis function
-async function analyzeReport(fileName: string): Promise<{
+// Enhanced defect type with cost breakdown
+interface DefectBreakdown {
+  issue: string;
+  severity: 'critical' | 'major' | 'moderate';
+  estimatedRepairCost: number;
+  creditRecommendation: number;
+  repairVsCredit: 'request_credit' | 'request_repair' | 'either';
+  sellerScript: string;
+}
+
+interface AnalysisResult {
   majorDefects: string[];
   summaryFindings: string;
   negotiationPoints: string[];
   estimatedCredit: number;
-}> {
+  defectBreakdown: DefectBreakdown[];
+  openingStatement: string;
+  closingStatement: string;
+}
+
+// AI analysis function
+async function analyzeReport(fileName: string): Promise<AnalysisResult> {
   try {
     const response = await openai.chat.completions.create({
       model: "gpt-4o",
       messages: [
         {
           role: "system",
-          content: `You are an AI assistant that analyzes property inspection reports. Generate realistic analysis data for a property inspection report. Return a JSON object with:
-- majorDefects: array of 2-5 major issues found (safety/structural concerns)
-- summaryFindings: a brief paragraph summarizing the overall condition
-- negotiationPoints: array of 3-5 specific points to negotiate with the seller
-- estimatedCredit: estimated dollar amount to request from seller (between $1000-$15000)
+          content: `You are an expert real estate negotiation coach and home inspection analyst. Generate comprehensive negotiation ammunition for a property buyer based on an inspection report. Return a JSON object with:
 
-Be specific and realistic. Use common inspection issues like roof age, HVAC condition, plumbing, electrical, foundation, etc.`
+- majorDefects: array of 2-5 major issues found (simple strings for quick reference)
+- summaryFindings: a brief paragraph summarizing the overall condition
+- negotiationPoints: array of 3-5 high-level talking points
+- estimatedCredit: total dollar amount to request from seller (sum of all issues)
+- defectBreakdown: array of detailed analysis for each issue with:
+  - issue: short description of the problem
+  - severity: "critical", "major", or "moderate"
+  - estimatedRepairCost: realistic repair cost estimate in dollars
+  - creditRecommendation: amount to request (usually 70-90% of repair cost)
+  - repairVsCredit: "request_credit" (prefer cash), "request_repair" (seller should fix), or "either"
+  - sellerScript: a 1-2 sentence script to use when discussing this issue with the seller or their agent
+- openingStatement: a confident opening statement to begin the negotiation conversation
+- closingStatement: a closing statement that summarizes the total ask and frames it fairly
+
+Be specific, realistic, and persuasive. Use actual contractor price ranges. Common issues: roof (age, condition), HVAC (age, efficiency), plumbing (leaks, age), electrical (panel, wiring), foundation (cracks, settling), water damage, mold, etc.`
         },
         {
           role: "user",
-          content: `Analyze this inspection report: ${fileName}. Generate realistic inspection findings.`
+          content: `Analyze this inspection report: ${fileName}. Generate comprehensive negotiation ammunition with per-issue cost breakdowns and seller scripts.`
         }
       ],
       response_format: { type: "json_object" },
-      max_completion_tokens: 1024,
+      max_completion_tokens: 2048,
     });
 
     const content = response.choices[0]?.message?.content || '{}';
     const parsed = JSON.parse(content);
     
+    // Build default defect breakdown from major defects if not provided
+    const defaultBreakdown: DefectBreakdown[] = (parsed.majorDefects || []).map((defect: string, i: number) => ({
+      issue: defect,
+      severity: i === 0 ? 'critical' : 'major',
+      estimatedRepairCost: 2000 + (i * 500),
+      creditRecommendation: 1500 + (i * 400),
+      repairVsCredit: 'request_credit',
+      sellerScript: `The inspection revealed ${defect.toLowerCase()}. This is a significant concern that warrants a credit toward closing costs.`,
+    }));
+
     return {
       majorDefects: parsed.majorDefects || ["Roof showing signs of wear", "HVAC system over 15 years old"],
       summaryFindings: parsed.summaryFindings || "Property is in fair condition with some maintenance items to address.",
       negotiationPoints: parsed.negotiationPoints || ["Request seller credit for roof repairs", "Negotiate HVAC replacement allowance"],
       estimatedCredit: parsed.estimatedCredit || 5000,
+      defectBreakdown: parsed.defectBreakdown || defaultBreakdown,
+      openingStatement: parsed.openingStatement || "Based on the professional inspection, we've identified several items that need to be addressed before closing.",
+      closingStatement: parsed.closingStatement || "We believe a credit is fair given the scope of work required. This allows everyone to move forward on good terms.",
     };
   } catch (error) {
     console.error("AI analysis error:", error);
@@ -79,6 +117,26 @@ Be specific and realistic. Use common inspection issues like roof age, HVAC cond
       summaryFindings: "Property requires professional assessment of key systems.",
       negotiationPoints: ["Request inspection contingency", "Negotiate repair credits"],
       estimatedCredit: 3000,
+      defectBreakdown: [
+        {
+          issue: "Roof needs inspection",
+          severity: 'major',
+          estimatedRepairCost: 2500,
+          creditRecommendation: 2000,
+          repairVsCredit: 'request_credit',
+          sellerScript: "The roof shows signs of wear and requires professional assessment. We're requesting a credit to address this.",
+        },
+        {
+          issue: "Plumbing requires evaluation",
+          severity: 'moderate',
+          estimatedRepairCost: 1200,
+          creditRecommendation: 1000,
+          repairVsCredit: 'either',
+          sellerScript: "The plumbing system needs evaluation. A credit toward potential repairs would be appropriate.",
+        },
+      ],
+      openingStatement: "Based on the inspection findings, we've identified items requiring attention.",
+      closingStatement: "We believe these credits are fair given the issues found.",
     };
   }
 }

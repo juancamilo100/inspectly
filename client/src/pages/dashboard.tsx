@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Upload, FileText, Sparkles, TrendingUp, Clock, AlertCircle, X, DollarSign, CheckCircle, Unlock, Zap, Copy, Download, MessageSquare, Wrench, CreditCard } from "lucide-react";
+import { Upload, FileText, Sparkles, TrendingUp, Clock, AlertCircle, X, DollarSign, CheckCircle, Unlock, Zap, Copy, Download, MessageSquare, Wrench, CreditCard, Eye, FileCheck, Send, Home, XCircle, MapPin } from "lucide-react";
 import jsPDF from "jspdf";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -10,9 +10,60 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { Report, CreditTransaction } from "@shared/schema";
+
+// Deal status types and configuration
+type DealStatus = 'watching' | 'offer_pending' | 'under_contract' | 'closed' | 'passed';
+
+const DEAL_STATUSES: { value: DealStatus; label: string; icon: React.ComponentType<{ className?: string }>; color: string }[] = [
+  { value: 'watching', label: 'Watching', icon: Eye, color: 'text-blue-500' },
+  { value: 'offer_pending', label: 'Offer Pending', icon: Send, color: 'text-orange-500' },
+  { value: 'under_contract', label: 'Under Contract', icon: FileCheck, color: 'text-purple-500' },
+  { value: 'closed', label: 'Closed', icon: Home, color: 'text-green-500' },
+  { value: 'passed', label: 'Passed', icon: XCircle, color: 'text-muted-foreground' },
+];
+
+// Deal Timeline Component
+function DealTimeline({ currentStatus }: { currentStatus: DealStatus }) {
+  const activeIndex = DEAL_STATUSES.findIndex(s => s.value === currentStatus);
+  
+  return (
+    <div className="flex items-center justify-between w-full py-2">
+      {DEAL_STATUSES.filter(s => s.value !== 'passed').map((status, index) => {
+        const isActive = index <= activeIndex && currentStatus !== 'passed';
+        const isCurrent = status.value === currentStatus;
+        const Icon = status.icon;
+        
+        return (
+          <div key={status.value} className="flex items-center flex-1">
+            <div className="flex flex-col items-center gap-1 flex-shrink-0">
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center border-2 transition-colors ${
+                isCurrent 
+                  ? 'bg-primary border-primary text-primary-foreground' 
+                  : isActive 
+                    ? 'bg-primary/20 border-primary/50 text-primary'
+                    : 'bg-muted border-muted-foreground/30 text-muted-foreground'
+              }`}>
+                <Icon className="w-4 h-4" />
+              </div>
+              <span className={`text-xs ${isCurrent ? 'font-medium' : 'text-muted-foreground'}`}>
+                {status.label}
+              </span>
+            </div>
+            {index < DEAL_STATUSES.length - 2 && (
+              <div className={`flex-1 h-0.5 mx-2 ${
+                isActive && index < activeIndex ? 'bg-primary/50' : 'bg-muted-foreground/20'
+              }`} />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 interface DefectBreakdown {
   issue: string;
@@ -220,6 +271,68 @@ export default function DashboardPage() {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [lastAnalysis, setLastAnalysis] = useState<{ analysis: AIAnalysis; report: Report } | null>(null);
+  const [dealStatus, setDealStatus] = useState<DealStatus>('watching');
+  const [savedToVault, setSavedToVault] = useState(false);
+  const [existingPropertyId, setExistingPropertyId] = useState<number | null>(null);
+
+  const saveToVaultMutation = useMutation({
+    mutationFn: async ({ address, status, reportId, existingId }: { address: string; status: DealStatus; reportId: number; existingId?: number }) => {
+      if (existingId) {
+        const response = await apiRequest(`/api/properties/${existingId}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ status }),
+        });
+        return response.json();
+      } else {
+        const response = await apiRequest('/api/properties', {
+          method: 'POST',
+          body: JSON.stringify({ address, status }),
+        });
+        const property = await response.json();
+        
+        await apiRequest(`/api/properties/${property.id}/reports`, {
+          method: 'POST',
+          body: JSON.stringify({ reportId }),
+        });
+        
+        return property;
+      }
+    },
+    onSuccess: (property) => {
+      toast({
+        title: existingPropertyId ? "Status Updated" : "Saved to Digital Vault",
+        description: existingPropertyId ? "Property status updated in your vault." : "Property added to your portfolio tracker.",
+      });
+      setSavedToVault(true);
+      setExistingPropertyId(property.id);
+      queryClient.invalidateQueries({ queryKey: ['/api/properties'] });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Failed to save",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const checkExistingPropertyMutation = useMutation({
+    mutationFn: async (address: string) => {
+      const response = await fetch('/api/properties', { credentials: 'include' });
+      if (!response.ok) return null;
+      const properties = await response.json();
+      return properties.find((p: { address: string; status: string; id: number }) => 
+        p.address.toLowerCase() === address.toLowerCase()
+      );
+    },
+    onSuccess: (property) => {
+      if (property) {
+        setExistingPropertyId(property.id);
+        setDealStatus(property.status as DealStatus);
+        setSavedToVault(true);
+      }
+    },
+  });
 
   const { data, isLoading, error } = useQuery<DashboardData>({
     queryKey: ['/api/dashboard'],
@@ -256,6 +369,10 @@ export default function DashboardPage() {
         description: `+${data.creditsEarned} credits earned. AI analysis complete.`,
       });
       setLastAnalysis({ analysis: data.analysis, report: data.report });
+      setDealStatus('watching');
+      setSavedToVault(false);
+      setExistingPropertyId(null);
+      checkExistingPropertyMutation.mutate(data.report.propertyAddress);
       queryClient.invalidateQueries({ queryKey: ['/api/dashboard'] });
       queryClient.invalidateQueries({ queryKey: ['/api/reports'] });
       setUploadProgress(0);
@@ -330,6 +447,22 @@ export default function DashboardPage() {
 
   return (
     <div className="p-6 space-y-6 max-w-6xl mx-auto">
+      {/* Welcome Hero - when no active analysis */}
+      {!lastAnalysis && (
+        <div className="relative overflow-hidden rounded-lg bg-gradient-to-br from-primary/10 via-primary/5 to-background border border-primary/20 p-6">
+          <div className="relative z-10">
+            <p className="text-sm font-medium text-primary mb-1">Upload & Analyze</p>
+            <h1 className="text-2xl font-bold mb-2" data-testid="text-dashboard-heading">
+              Get Your Negotiation Edge in 60 Seconds
+            </h1>
+            <p className="text-muted-foreground max-w-xl">
+              Drop your inspection PDF below. AI will generate seller scripts, cost breakdowns, and credit recommendations - ready for your next call.
+            </p>
+          </div>
+          <div className="absolute top-0 right-0 w-48 h-48 bg-primary/5 rounded-full blur-3xl -translate-y-12 translate-x-12" />
+        </div>
+      )}
+
       {/* Stats Row */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <Card>
@@ -420,14 +553,17 @@ export default function DashboardPage() {
       </div>
 
       {/* Upload Zone */}
-      <Card>
+      <Card className={lastAnalysis ? '' : 'border-primary/30'}>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Upload className="w-5 h-5" />
-            Upload Inspection Report
+            {lastAnalysis ? 'Upload Another Report' : 'Upload Your Inspection Report'}
           </CardTitle>
           <CardDescription>
-            Get instant negotiation ammo in 60 seconds. Earn +10 credits per upload.
+            {lastAnalysis 
+              ? 'Add another property to your portfolio. Each upload earns +10 credits.'
+              : 'Receive your inspection? Upload now - AI battlecard ready in 60 seconds.'
+            }
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -497,21 +633,26 @@ export default function DashboardPage() {
         </CardContent>
       </Card>
 
-      {/* AI Deal Coach Panel */}
+      {/* AI Deal Coach Panel - Hero after upload */}
       {lastAnalysis && (
-        <Card className="border-primary/50 bg-primary/5">
+        <Card className="border-green-500/50 bg-gradient-to-br from-green-500/10 via-green-500/5 to-background shadow-lg">
           <CardHeader>
             <div className="flex items-center justify-between gap-4">
-              <div className="flex items-center gap-2">
-                <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
-                  <Sparkles className="w-5 h-5 text-primary" />
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-full bg-green-500/20 flex items-center justify-center">
+                  <CheckCircle className="w-6 h-6 text-green-500" />
                 </div>
                 <div>
+                  <p className="text-sm font-medium text-green-600 dark:text-green-400 mb-0.5">
+                    Battlecard Ready - You're Negotiation Ready
+                  </p>
                   <CardTitle className="flex items-center gap-2">
-                    AI Deal Coach
-                    <Badge variant="secondary">New Analysis</Badge>
+                    {lastAnalysis.report.propertyAddress}
                   </CardTitle>
-                  <CardDescription>{lastAnalysis.report.propertyAddress}</CardDescription>
+                  <CardDescription className="flex items-center gap-2 mt-1">
+                    <Sparkles className="w-3 h-3" />
+                    AI Deal Coach Analysis Complete
+                  </CardDescription>
                 </div>
               </div>
               <div className="flex items-center gap-2">
@@ -549,6 +690,68 @@ export default function DashboardPage() {
             </div>
           </CardHeader>
           <CardContent className="space-y-6">
+            {/* Deal Status Tracker */}
+            <div className="p-4 rounded-lg bg-background border">
+              <div className="flex items-center justify-between gap-4 mb-4 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <MapPin className="w-4 h-4 text-muted-foreground" />
+                  <span className="text-sm font-medium">Where are you in this deal?</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Select value={dealStatus} onValueChange={(v) => setDealStatus(v as DealStatus)}>
+                    <SelectTrigger className="w-[180px]" data-testid="select-deal-status">
+                      <SelectValue placeholder="Select status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {DEAL_STATUSES.map((status) => {
+                        const Icon = status.icon;
+                        return (
+                          <SelectItem key={status.value} value={status.value}>
+                            <div className="flex items-center gap-2">
+                              <Icon className={`w-4 h-4 ${status.color}`} />
+                              {status.label}
+                            </div>
+                          </SelectItem>
+                        );
+                      })}
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    size="sm"
+                    variant={savedToVault ? "outline" : "default"}
+                    onClick={() => {
+                      if (lastAnalysis) {
+                        saveToVaultMutation.mutate({
+                          address: lastAnalysis.report.propertyAddress,
+                          status: dealStatus,
+                          reportId: lastAnalysis.report.id,
+                          existingId: existingPropertyId || undefined,
+                        });
+                      }
+                    }}
+                    disabled={saveToVaultMutation.isPending}
+                    data-testid="button-save-to-vault"
+                  >
+                    {savedToVault ? (
+                      <>
+                        <CheckCircle className="w-4 h-4 mr-1 text-green-500" />
+                        {saveToVaultMutation.isPending ? 'Updating...' : 'Update Status'}
+                      </>
+                    ) : (
+                      <>
+                        <Home className="w-4 h-4 mr-1" />
+                        {saveToVaultMutation.isPending ? 'Saving...' : 'Save to Vault'}
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </div>
+              <DealTimeline currentStatus={dealStatus} />
+              <p className="text-xs text-muted-foreground mt-2">
+                Track this property in your Digital Vault to monitor deal progress
+              </p>
+            </div>
+
             {/* Total Credit Request - Hero */}
             <div className="p-4 rounded-lg bg-green-500/10 border border-green-500/30">
               <div className="flex items-center justify-between gap-4 flex-wrap">

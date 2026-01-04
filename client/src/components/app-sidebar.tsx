@@ -29,7 +29,7 @@ import { useAuth } from "@/hooks/use-auth";
 
 const navItems = [
   {
-    title: "Dashboard",
+    title: "Upload & Analyze",
     url: "/dashboard",
     icon: Upload,
   },

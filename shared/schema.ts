@@ -1,18 +1,131 @@
-import { sql } from "drizzle-orm";
-import { pgTable, text, varchar } from "drizzle-orm/pg-core";
+import { sql, relations } from "drizzle-orm";
+import { pgTable, text, varchar, integer, timestamp, boolean, jsonb, serial } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
-export const users = pgTable("users", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  username: text("username").notNull().unique(),
-  password: text("password").notNull(),
+// Re-export auth models
+export * from "./models/auth";
+
+// ============================================
+// REPORTS - Inspection reports with extracted data
+// ============================================
+export const reports = pgTable("reports", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  propertyAddress: text("property_address").notNull(),
+  inspectionDate: timestamp("inspection_date"),
+  fileHash: text("file_hash").notNull().unique(),
+  fileName: text("file_name").notNull(),
+  fileSize: integer("file_size").notNull(),
+  
+  // AI-extracted data
+  majorDefects: jsonb("major_defects").$type<string[]>(),
+  summaryFindings: text("summary_findings"),
+  negotiationPoints: jsonb("negotiation_points").$type<string[]>(),
+  estimatedCredit: integer("estimated_credit"),
+  
+  // Redaction status
+  isRedacted: boolean("is_redacted").default(false),
+  
+  // Visibility
+  isPublic: boolean("is_public").default(true),
+  downloadCount: integer("download_count").default(0),
+  
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 
-export const insertUserSchema = createInsertSchema(users).pick({
-  username: true,
-  password: true,
+export const reportsRelations = relations(reports, ({ one }) => ({
+  user: one(reports, {
+    fields: [reports.userId],
+    references: [reports.id],
+  }),
+}));
+
+export const insertReportSchema = createInsertSchema(reports).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+  downloadCount: true,
 });
 
-export type InsertUser = z.infer<typeof insertUserSchema>;
-export type User = typeof users.$inferSelect;
+export type Report = typeof reports.$inferSelect;
+export type InsertReport = z.infer<typeof insertReportSchema>;
+
+// ============================================
+// CREDITS - User credit balance and transactions
+// ============================================
+export const creditTransactions = pgTable("credit_transactions", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  amount: integer("amount").notNull(), // positive for credit, negative for debit
+  type: text("type").notNull(), // 'upload', 'download', 'bounty_stake', 'bounty_earned', 'signup_bonus'
+  description: text("description"),
+  reportId: integer("report_id"),
+  bountyId: integer("bounty_id"),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+export const insertCreditTransactionSchema = createInsertSchema(creditTransactions).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type CreditTransaction = typeof creditTransactions.$inferSelect;
+export type InsertCreditTransaction = z.infer<typeof insertCreditTransactionSchema>;
+
+// ============================================
+// BOUNTIES - Report requests for specific addresses
+// ============================================
+export const bounties = pgTable("bounties", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  propertyAddress: text("property_address").notNull(),
+  stakedCredits: integer("staked_credits").notNull().default(10),
+  status: text("status").notNull().default("open"), // 'open', 'fulfilled', 'cancelled'
+  fulfilledByUserId: varchar("fulfilled_by_user_id"),
+  fulfilledReportId: integer("fulfilled_report_id"),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  fulfilledAt: timestamp("fulfilled_at"),
+});
+
+export const insertBountySchema = createInsertSchema(bounties).omit({
+  id: true,
+  createdAt: true,
+  fulfilledAt: true,
+  fulfilledByUserId: true,
+  fulfilledReportId: true,
+  status: true,
+});
+
+export type Bounty = typeof bounties.$inferSelect;
+export type InsertBounty = z.infer<typeof insertBountySchema>;
+
+// ============================================
+// DOWNLOADS - Track who downloaded what
+// ============================================
+export const downloads = pgTable("downloads", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  reportId: integer("report_id").notNull(),
+  creditSpent: integer("credit_spent").notNull(),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+export const insertDownloadSchema = createInsertSchema(downloads).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type Download = typeof downloads.$inferSelect;
+export type InsertDownload = z.infer<typeof insertDownloadSchema>;
+
+// ============================================
+// CREDIT CONSTANTS
+// ============================================
+export const CREDIT_VALUES = {
+  SIGNUP_BONUS: 50,
+  UPLOAD_REWARD: 25,
+  DOWNLOAD_COST: 10,
+  MIN_BOUNTY_STAKE: 10,
+} as const;

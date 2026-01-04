@@ -6,47 +6,47 @@ import { ThemeToggle } from "@/components/theme-toggle";
 
 const features = [
   {
-    icon: Upload,
-    title: "Smart Upload",
-    description: "Drag & drop your inspection PDF. Our AI extracts key data in under 30 seconds.",
-  },
-  {
     icon: Sparkles,
     title: "AI Deal Coach",
-    description: "Get instant negotiation points and estimated credit requests for seller discussions.",
+    description: "Get instant seller scripts, per-issue cost breakdowns, and estimated credit requests - ready for your next call.",
+  },
+  {
+    icon: Upload,
+    title: "60-Second Analysis",
+    description: "Upload your inspection PDF the moment you receive it. AI analysis is ready before your coffee cools.",
   },
   {
     icon: Coins,
-    title: "Karma Credits",
-    description: "Earn credits by uploading reports. Spend them to access reports from other investors.",
+    title: "Upload 1, Unlock 2",
+    description: "Every report you share earns credits to unlock two more. Build your research war chest.",
   },
   {
     icon: Shield,
     title: "Privacy Protected",
-    description: "Auto-redaction removes your personal info before reports are shared publicly.",
+    description: "Your personal info is auto-redacted before sharing. Control what you share, keep what you need.",
   },
   {
     icon: Bell,
     title: "Bounty System",
-    description: "Request reports for specific addresses. Stake credits and get notified when available.",
+    description: "Looking at a specific property? Request its report. Get notified when an investor shares it.",
   },
 ];
 
 const howItWorks = [
   {
     step: "1",
-    title: "Upload Your Report",
-    description: "Drop any PDF inspection report. Old or new - they all have value.",
+    title: "Upload Immediately",
+    description: "Get your inspection report? Upload it right away - analysis is ready in 60 seconds.",
   },
   {
     step: "2",
-    title: "Get AI Analysis",
-    description: "Receive negotiation strategies and credit estimates instantly.",
+    title: "Get Your Battlecard",
+    description: "AI generates seller scripts, issue breakdowns, and credit recommendations for your negotiation.",
   },
   {
     step: "3",
-    title: "Earn & Spend Credits",
-    description: "Use credits to access reports for properties you're considering.",
+    title: "Win Your Negotiation",
+    description: "Walk into your next seller conversation with data-backed leverage and confidence.",
   },
 ];
 
@@ -79,31 +79,34 @@ export default function LandingPage() {
         <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-transparent to-accent/10" />
         <div className="container mx-auto px-4 relative">
           <div className="max-w-3xl mx-auto text-center">
+            <p className="text-sm font-medium text-primary mb-4 tracking-wide uppercase">
+              For Real Estate Investors
+            </p>
             <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold tracking-tight mb-6" data-testid="text-hero-title">
-              Turn Dead Inspection Reports Into{" "}
-              <span className="text-primary">Deal Leverage</span>
+              Win Your Next{" "}
+              <span className="text-primary">Negotiation</span>
             </h1>
             <p className="text-lg md:text-xl text-muted-foreground mb-8 max-w-2xl mx-auto">
-              Stop paying $300-$600 for inspections on deals that fall through. 
-              Upload your reports, get AI-powered insights, and access a community-driven 
-              marketplace of property inspections.
+              Upload your inspection report the moment you receive it. Get AI-powered 
+              seller scripts, cost breakdowns, and credit requests - ready for your negotiation 
+              in 60 seconds.
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
               <Button size="lg" asChild data-testid="button-get-started">
                 <a href="/api/login">
-                  Get Started Free
+                  Start Winning Negotiations
                   <ArrowRight className="w-5 h-5 ml-2" />
                 </a>
               </Button>
               <Button size="lg" variant="outline" asChild data-testid="button-learn-more">
                 <a href="#how-it-works">
-                  Learn More
+                  See How It Works
                 </a>
               </Button>
             </div>
             <p className="mt-6 text-sm text-muted-foreground">
               <CheckCircle className="w-4 h-4 inline mr-1 text-green-500" />
-              50 free credits on signup
+              50 free credits on signup - Upload 1 report, unlock 2 from the marketplace
             </p>
           </div>
         </div>
@@ -113,10 +116,10 @@ export default function LandingPage() {
       <section className="py-20 bg-muted/30">
         <div className="container mx-auto px-4">
           <div className="text-center mb-12">
-            <h2 className="text-3xl font-bold mb-4">Everything You Need</h2>
+            <h2 className="text-3xl font-bold mb-4">Your Negotiation Toolkit</h2>
             <p className="text-muted-foreground max-w-2xl mx-auto">
-              Built by real estate investors, for real estate investors. 
-              Every feature is designed to save you money and give you negotiating power.
+              From the moment you receive your inspection to the final negotiation call - 
+              everything you need to maximize your leverage and close better deals.
             </p>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -139,9 +142,10 @@ export default function LandingPage() {
       <section id="how-it-works" className="py-20">
         <div className="container mx-auto px-4">
           <div className="text-center mb-12">
-            <h2 className="text-3xl font-bold mb-4">How It Works</h2>
+            <h2 className="text-3xl font-bold mb-4">60 Seconds to Negotiation Ready</h2>
             <p className="text-muted-foreground max-w-2xl mx-auto">
-              Simple, fast, and designed to get you results in under a minute.
+              From upload to battlecard - everything you need to walk into your seller 
+              conversation with confidence.
             </p>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-4xl mx-auto">
@@ -166,9 +170,9 @@ export default function LandingPage() {
         <div className="container mx-auto px-4">
           <div className="max-w-4xl mx-auto">
             <div className="text-center mb-12">
-              <h2 className="text-3xl font-bold mb-4">The Credit Economy</h2>
+              <h2 className="text-3xl font-bold mb-4">Build Your Research War Chest</h2>
               <p className="text-muted-foreground">
-                A fair exchange system where everyone wins.
+                Every report you upload earns credits for your next property research. Fair exchange, mutual benefit.
               </p>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
@@ -232,14 +236,14 @@ export default function LandingPage() {
       <section className="py-20">
         <div className="container mx-auto px-4">
           <div className="max-w-2xl mx-auto text-center">
-            <h2 className="text-3xl font-bold mb-4">Ready to Get Started?</h2>
+            <h2 className="text-3xl font-bold mb-4">Your Next Inspection Awaits</h2>
             <p className="text-muted-foreground mb-8">
-              Join thousands of real estate investors who are turning their inspection reports 
-              into negotiating power.
+              The moment you receive your next inspection report, upload it here. 
+              60 seconds later, you'll have everything you need to negotiate with confidence.
             </p>
             <Button size="lg" asChild data-testid="button-cta-signup">
               <a href="/api/login">
-                Create Free Account
+                Get Your Negotiation Edge
                 <ArrowRight className="w-5 h-5 ml-2" />
               </a>
             </Button>

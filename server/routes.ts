@@ -5,7 +5,8 @@ import crypto from "crypto";
 import OpenAI from "openai";
 import { storage } from "./storage";
 import { setupAuth, isAuthenticated, registerAuthRoutes } from "./replit_integrations/auth";
-import { CREDIT_VALUES } from "@shared/schema";
+import { CREDIT_VALUES, insertPropertySchema, insertPropertyReportSchema } from "@shared/schema";
+import { z } from "zod";
 
 // Configure multer for file uploads
 const upload = multer({
@@ -521,6 +522,151 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Signup bonus error:", error);
       res.status(500).json({ error: "Failed to process signup bonus" });
+    }
+  });
+
+  // ============================================
+  // PROPERTIES (Digital Vault)
+  // ============================================
+
+  // Get all properties for user
+  app.get("/api/properties", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const userId = getUserId(req);
+      const props = await storage.getPropertiesByUser(userId);
+      res.json({ properties: props });
+    } catch (error) {
+      console.error("Get properties error:", error);
+      res.status(500).json({ error: "Failed to get properties" });
+    }
+  });
+
+  // Create property
+  const createPropertySchema = insertPropertySchema.extend({
+    address: z.string().min(1, "Address is required"),
+    status: z.enum(['watching', 'offer_pending', 'under_contract', 'closed', 'passed']).optional().default('watching'),
+  }).omit({ userId: true });
+
+  app.post("/api/properties", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const userId = getUserId(req);
+      const parseResult = createPropertySchema.safeParse(req.body);
+      
+      if (!parseResult.success) {
+        return res.status(400).json({ error: parseResult.error.errors[0]?.message || "Invalid request" });
+      }
+
+      const property = await storage.createProperty({
+        userId,
+        ...parseResult.data,
+      });
+
+      res.json(property);
+    } catch (error) {
+      console.error("Create property error:", error);
+      res.status(500).json({ error: "Failed to create property" });
+    }
+  });
+
+  // Update property
+  const updatePropertySchema = z.object({
+    address: z.string().min(1).optional(),
+    city: z.string().optional(),
+    state: z.string().optional(),
+    zipCode: z.string().optional(),
+    latitude: z.string().optional(),
+    longitude: z.string().optional(),
+    status: z.enum(['watching', 'offer_pending', 'under_contract', 'closed', 'passed']).optional(),
+    notes: z.string().optional(),
+    purchasePrice: z.string().optional(),
+    offerAmount: z.string().optional(),
+    closingDate: z.string().optional(),
+  });
+
+  app.patch("/api/properties/:id", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const userId = getUserId(req);
+      const propertyId = parseInt(req.params.id);
+
+      if (isNaN(propertyId)) {
+        return res.status(400).json({ error: "Invalid property ID" });
+      }
+
+      const parseResult = updatePropertySchema.safeParse(req.body);
+      if (!parseResult.success) {
+        return res.status(400).json({ error: parseResult.error.errors[0]?.message || "Invalid request" });
+      }
+
+      const property = await storage.getProperty(propertyId);
+      if (!property) {
+        return res.status(404).json({ error: "Property not found" });
+      }
+      if (property.userId !== userId) {
+        return res.status(403).json({ error: "Not authorized" });
+      }
+
+      const updated = await storage.updateProperty(propertyId, parseResult.data);
+      res.json(updated);
+    } catch (error) {
+      console.error("Update property error:", error);
+      res.status(500).json({ error: "Failed to update property" });
+    }
+  });
+
+  // Delete property
+  app.delete("/api/properties/:id", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const userId = getUserId(req);
+      const propertyId = parseInt(req.params.id);
+
+      const property = await storage.getProperty(propertyId);
+      if (!property) {
+        return res.status(404).json({ error: "Property not found" });
+      }
+      if (property.userId !== userId) {
+        return res.status(403).json({ error: "Not authorized" });
+      }
+
+      await storage.deleteProperty(propertyId);
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Delete property error:", error);
+      res.status(500).json({ error: "Failed to delete property" });
+    }
+  });
+
+  // Link report to property
+  const linkReportSchema = z.object({
+    reportId: z.number().int().positive("Report ID is required"),
+  });
+
+  app.post("/api/properties/:id/reports", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const userId = getUserId(req);
+      const propertyId = parseInt(req.params.id);
+
+      if (isNaN(propertyId)) {
+        return res.status(400).json({ error: "Invalid property ID" });
+      }
+
+      const parseResult = linkReportSchema.safeParse(req.body);
+      if (!parseResult.success) {
+        return res.status(400).json({ error: parseResult.error.errors[0]?.message || "Invalid request" });
+      }
+
+      const property = await storage.getProperty(propertyId);
+      if (!property) {
+        return res.status(404).json({ error: "Property not found" });
+      }
+      if (property.userId !== userId) {
+        return res.status(403).json({ error: "Not authorized" });
+      }
+
+      const link = await storage.linkPropertyReport({ propertyId, reportId: parseResult.data.reportId });
+      res.json(link);
+    } catch (error) {
+      console.error("Link report error:", error);
+      res.status(500).json({ error: "Failed to link report" });
     }
   });
 

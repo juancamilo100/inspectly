@@ -121,6 +121,54 @@ export type Download = typeof downloads.$inferSelect;
 export type InsertDownload = z.infer<typeof insertDownloadSchema>;
 
 // ============================================
+// PROPERTIES - Digital Vault for tracking properties
+// ============================================
+export const properties = pgTable("properties", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  address: text("address").notNull(),
+  city: text("city"),
+  state: text("state"),
+  zipCode: text("zip_code"),
+  latitude: text("latitude"),
+  longitude: text("longitude"),
+  status: text("status").notNull().default("watching"), // 'watching', 'offer_pending', 'under_contract', 'closed', 'passed'
+  notes: text("notes"),
+  purchasePrice: integer("purchase_price"),
+  offerAmount: integer("offer_amount"),
+  closingDate: timestamp("closing_date"),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+export const insertPropertySchema = createInsertSchema(properties).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type Property = typeof properties.$inferSelect;
+export type InsertProperty = z.infer<typeof insertPropertySchema>;
+
+// ============================================
+// PROPERTY_REPORTS - Link properties to reports
+// ============================================
+export const propertyReports = pgTable("property_reports", {
+  id: serial("id").primaryKey(),
+  propertyId: integer("property_id").notNull(),
+  reportId: integer("report_id").notNull(),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+export const insertPropertyReportSchema = createInsertSchema(propertyReports).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type PropertyReport = typeof propertyReports.$inferSelect;
+export type InsertPropertyReport = z.infer<typeof insertPropertyReportSchema>;
+
+// ============================================
 // CREDIT CONSTANTS
 // ============================================
 export const CREDIT_VALUES = {

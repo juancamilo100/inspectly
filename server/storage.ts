@@ -3,6 +3,8 @@ import {
   creditTransactions, 
   bounties, 
   downloads,
+  properties,
+  propertyReports,
   CREDIT_VALUES,
   type Report, 
   type InsertReport,
@@ -12,6 +14,10 @@ import {
   type InsertBounty,
   type Download,
   type InsertDownload,
+  type Property,
+  type InsertProperty,
+  type PropertyReport,
+  type InsertPropertyReport,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, ne, sql, ilike } from "drizzle-orm";
@@ -46,6 +52,18 @@ export interface IStorage {
   getDownloadsByUser(userId: string): Promise<Download[]>;
   hasUserDownloaded(userId: string, reportId: number): Promise<boolean>;
   createDownload(download: InsertDownload): Promise<Download>;
+
+  // Properties
+  getProperty(id: number): Promise<Property | undefined>;
+  getPropertiesByUser(userId: string): Promise<Property[]>;
+  createProperty(property: InsertProperty): Promise<Property>;
+  updateProperty(id: number, data: Partial<Property>): Promise<Property | undefined>;
+  deleteProperty(id: number): Promise<void>;
+
+  // Property Reports
+  getPropertyReports(propertyId: number): Promise<PropertyReport[]>;
+  linkPropertyReport(link: InsertPropertyReport): Promise<PropertyReport>;
+  unlinkPropertyReport(propertyId: number, reportId: number): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -217,6 +235,55 @@ export class DatabaseStorage implements IStorage {
   async createDownload(download: InsertDownload): Promise<Download> {
     const [newDownload] = await db.insert(downloads).values(download).returning();
     return newDownload;
+  }
+
+  // Properties
+  async getProperty(id: number): Promise<Property | undefined> {
+    const [property] = await db.select().from(properties).where(eq(properties.id, id));
+    return property;
+  }
+
+  async getPropertiesByUser(userId: string): Promise<Property[]> {
+    return db.select().from(properties)
+      .where(eq(properties.userId, userId))
+      .orderBy(desc(properties.createdAt));
+  }
+
+  async createProperty(property: InsertProperty): Promise<Property> {
+    const [newProperty] = await db.insert(properties).values(property).returning();
+    return newProperty;
+  }
+
+  async updateProperty(id: number, data: Partial<Property>): Promise<Property | undefined> {
+    const [updated] = await db.update(properties)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(properties.id, id))
+      .returning();
+    return updated;
+  }
+
+  async deleteProperty(id: number): Promise<void> {
+    await db.delete(propertyReports).where(eq(propertyReports.propertyId, id));
+    await db.delete(properties).where(eq(properties.id, id));
+  }
+
+  // Property Reports
+  async getPropertyReports(propertyId: number): Promise<PropertyReport[]> {
+    return db.select().from(propertyReports)
+      .where(eq(propertyReports.propertyId, propertyId));
+  }
+
+  async linkPropertyReport(link: InsertPropertyReport): Promise<PropertyReport> {
+    const [newLink] = await db.insert(propertyReports).values(link).returning();
+    return newLink;
+  }
+
+  async unlinkPropertyReport(propertyId: number, reportId: number): Promise<void> {
+    await db.delete(propertyReports)
+      .where(and(
+        eq(propertyReports.propertyId, propertyId),
+        eq(propertyReports.reportId, reportId)
+      ));
   }
 }
 

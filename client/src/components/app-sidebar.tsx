@@ -6,7 +6,8 @@ import {
   Coins, 
   Bell,
   LogOut,
-  User
+  User,
+  Home
 } from "lucide-react";
 import {
   Sidebar,
@@ -31,6 +32,11 @@ const navItems = [
     title: "Dashboard",
     url: "/dashboard",
     icon: Upload,
+  },
+  {
+    title: "Digital Vault",
+    url: "/vault",
+    icon: Home,
   },
   {
     title: "Browse Reports",

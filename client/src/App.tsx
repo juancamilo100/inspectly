@@ -19,6 +19,7 @@ import BrowsePage from "@/pages/browse";
 import MyReportsPage from "@/pages/my-reports";
 import CreditsPage from "@/pages/credits";
 import BountiesPage from "@/pages/bounties";
+import VaultPage from "@/pages/vault";
 
 interface DashboardData {
   creditBalance: number;
@@ -54,6 +55,7 @@ function AuthenticatedLayout() {
               <Route path="/dashboard" component={DashboardPage} />
               <Route path="/browse" component={BrowsePage} />
               <Route path="/my-reports" component={MyReportsPage} />
+              <Route path="/vault" component={VaultPage} />
               <Route path="/credits" component={CreditsPage} />
               <Route path="/bounties" component={BountiesPage} />
               <Route path="/">

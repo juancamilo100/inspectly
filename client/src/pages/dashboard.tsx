@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Upload, FileText, Sparkles, TrendingUp, Clock, AlertCircle, X, DollarSign, CheckCircle } from "lucide-react";
+import { Upload, FileText, Sparkles, TrendingUp, Clock, AlertCircle, X, DollarSign, CheckCircle, Unlock, Zap } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -194,21 +194,27 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="border-primary/30 bg-primary/5">
           <CardContent className="p-4">
             <div className="flex items-center justify-between gap-4">
               <div>
-                <p className="text-sm text-muted-foreground">Credits Earned</p>
+                <p className="text-sm text-muted-foreground flex items-center gap-1">
+                  <Zap className="w-3 h-3" />
+                  War Chest
+                </p>
                 {isLoading ? (
                   <Skeleton className="h-8 w-16 mt-1" />
                 ) : (
-                  <p className="text-2xl font-bold font-mono text-green-500">
-                    +{data?.stats.creditsEarned ?? 0}
-                  </p>
+                  <>
+                    <p className="text-2xl font-bold font-mono text-primary" data-testid="text-war-chest">
+                      {Math.floor((data?.creditBalance ?? 0) / 5)} reports
+                    </p>
+                    <p className="text-xs text-muted-foreground">ready to unlock</p>
+                  </>
                 )}
               </div>
-              <div className="w-10 h-10 rounded-full bg-green-500/10 flex items-center justify-center">
-                <TrendingUp className="w-5 h-5 text-green-500" />
+              <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
+                <Unlock className="w-5 h-5 text-primary" />
               </div>
             </div>
           </CardContent>
@@ -218,7 +224,7 @@ export default function DashboardPage() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between gap-4">
               <div>
-                <p className="text-sm text-muted-foreground">Downloads</p>
+                <p className="text-sm text-muted-foreground">Reports Accessed</p>
                 {isLoading ? (
                   <Skeleton className="h-8 w-16 mt-1" />
                 ) : (
@@ -243,7 +249,7 @@ export default function DashboardPage() {
             Upload Inspection Report
           </CardTitle>
           <CardDescription>
-            Drop your PDF here for instant AI analysis and earn 25 credits
+            Get instant negotiation ammo in 60 seconds. Earn +10 credits per upload.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -305,7 +311,7 @@ export default function DashboardPage() {
                 </div>
                 <Badge variant="secondary" className="mt-2">
                   <Sparkles className="w-3 h-3 mr-1" />
-                  +25 credits per upload
+                  +10 credits per upload (Unlock 2 reports!)
                 </Badge>
               </>
             )}

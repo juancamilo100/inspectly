@@ -39,7 +39,7 @@ export default function BrowsePage() {
   const { toast } = useToast();
   const [searchQuery, setSearchQuery] = useState("");
   const [bountyAddress, setBountyAddress] = useState("");
-  const [bountyCredits, setBountyCredits] = useState(10);
+  const [bountyCredits, setBountyCredits] = useState(5);
   const [isBountyDialogOpen, setIsBountyDialogOpen] = useState(false);
 
   const { data, isLoading, error } = useQuery<BrowseData>({
@@ -60,8 +60,8 @@ export default function BrowsePage() {
     },
     onSuccess: () => {
       toast({
-        title: "Report downloaded!",
-        description: "-10 credits. Check your downloads.",
+        title: "Report unlocked!",
+        description: "-5 credits. Check your downloads.",
       });
       queryClient.invalidateQueries({ queryKey: ['/api/dashboard'] });
       queryClient.invalidateQueries({ queryKey: ['/api/reports'] });
@@ -89,7 +89,7 @@ export default function BrowsePage() {
       });
       setIsBountyDialogOpen(false);
       setBountyAddress("");
-      setBountyCredits(10);
+      setBountyCredits(5);
       queryClient.invalidateQueries({ queryKey: ['/api/bounties'] });
       queryClient.invalidateQueries({ queryKey: ['/api/dashboard'] });
     },
@@ -188,14 +188,14 @@ export default function BrowsePage() {
                     <div className="flex items-center gap-2 mt-1">
                       <Input
                         type="number"
-                        min={10}
+                        min={5}
                         value={bountyCredits}
-                        onChange={(e) => setBountyCredits(Math.max(10, parseInt(e.target.value) || 10))}
+                        onChange={(e) => setBountyCredits(Math.max(5, parseInt(e.target.value) || 5))}
                         className="w-24"
                         data-testid="input-bounty-credits"
                       />
                       <span className="text-sm text-muted-foreground">
-                        (minimum 10 credits)
+                        (minimum 5 credits)
                       </span>
                     </div>
                   </div>
@@ -258,7 +258,7 @@ export default function BrowsePage() {
                 <div className="flex items-center justify-between gap-2 pt-2 border-t">
                   <Badge variant="secondary" className="text-xs">
                     <Coins className="w-3 h-3 mr-1" />
-                    10 credits
+                    5 credits
                   </Badge>
                   <Button 
                     size="sm"

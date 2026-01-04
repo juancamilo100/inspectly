@@ -81,7 +81,7 @@ export const bounties = pgTable("bounties", {
   id: serial("id").primaryKey(),
   userId: varchar("user_id").notNull(),
   propertyAddress: text("property_address").notNull(),
-  stakedCredits: integer("staked_credits").notNull().default(10),
+  stakedCredits: integer("staked_credits").notNull().default(5),
   status: text("status").notNull().default("open"), // 'open', 'fulfilled', 'cancelled'
   fulfilledByUserId: varchar("fulfilled_by_user_id"),
   fulfilledReportId: integer("fulfilled_report_id"),
@@ -125,7 +125,8 @@ export type InsertDownload = z.infer<typeof insertDownloadSchema>;
 // ============================================
 export const CREDIT_VALUES = {
   SIGNUP_BONUS: 50,
-  UPLOAD_REWARD: 25,
-  DOWNLOAD_COST: 10,
-  MIN_BOUNTY_STAKE: 10,
+  UPLOAD_REWARD: 10,        // Rebalanced: "Upload 1, Unlock 2"
+  DOWNLOAD_COST: 5,          // Rebalanced: lower barrier to access
+  EARLY_UPLOAD_BONUS: 5,     // Bonus for uploading within 48h of inspection
+  MIN_BOUNTY_STAKE: 5,       // Lower barrier to request reports
 } as const;

@@ -187,7 +187,11 @@ export default function LandingPage() {
                     </li>
                     <li className="flex items-center gap-2">
                       <CheckCircle className="w-4 h-4 text-green-500 flex-shrink-0" />
-                      <span><strong>+25</strong> credits per report uploaded</span>
+                      <span><strong>+10</strong> credits per report uploaded</span>
+                    </li>
+                    <li className="flex items-center gap-2">
+                      <CheckCircle className="w-4 h-4 text-green-500 flex-shrink-0" />
+                      <span><strong>+5</strong> bonus for uploading within 48h</span>
                     </li>
                     <li className="flex items-center gap-2">
                       <CheckCircle className="w-4 h-4 text-green-500 flex-shrink-0" />
@@ -207,13 +211,16 @@ export default function LandingPage() {
                   <ul className="space-y-3 text-sm">
                     <li className="flex items-center gap-2">
                       <Coins className="w-4 h-4 text-orange-500 flex-shrink-0" />
-                      <span><strong>-10</strong> credits to download a report</span>
+                      <span><strong>-5</strong> credits to unlock a report</span>
                     </li>
                     <li className="flex items-center gap-2">
                       <Coins className="w-4 h-4 text-orange-500 flex-shrink-0" />
-                      <span><strong>-10+</strong> credits to stake on bounties</span>
+                      <span><strong>-5+</strong> credits to stake on bounties</span>
                     </li>
                   </ul>
+                  <p className="mt-4 text-xs text-muted-foreground border-t pt-3">
+                    Upload 1 report = Unlock 2 from the marketplace
+                  </p>
                 </CardContent>
               </Card>
             </div>

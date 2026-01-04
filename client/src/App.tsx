@@ -14,6 +14,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 import NotFound from "@/pages/not-found";
 import LandingPage from "@/pages/landing";
+import AuthPage from "@/pages/auth";
 import DashboardPage from "@/pages/dashboard";
 import BrowsePage from "@/pages/browse";
 import MyReportsPage from "@/pages/my-reports";
@@ -86,9 +87,14 @@ function AppContent() {
     );
   }
 
-  // Show landing page for unauthenticated users
+  // Show landing page or auth page for unauthenticated users
   if (!isAuthenticated) {
-    return <LandingPage />;
+    return (
+      <Switch>
+        <Route path="/auth" component={AuthPage} />
+        <Route component={LandingPage} />
+      </Switch>
+    );
   }
 
   // Show authenticated layout

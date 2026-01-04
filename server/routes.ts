@@ -4,7 +4,7 @@ import multer from "multer";
 import crypto from "crypto";
 import OpenAI from "openai";
 import { storage } from "./storage";
-import { setupAuth, isAuthenticated, registerAuthRoutes } from "./replit_integrations/auth";
+import { setupAuth, isAuthenticated, registerAuthRoutes, getUserId } from "./auth";
 import { CREDIT_VALUES, insertPropertySchema, insertPropertyReportSchema } from "@shared/schema";
 import { z } from "zod";
 
@@ -26,12 +26,6 @@ const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
 });
-
-// Helper to get user ID from request
-function getUserId(req: Request): string {
-  const user = req.user as any;
-  return user?.claims?.sub;
-}
 
 // Enhanced defect type with cost breakdown
 interface DefectBreakdown {
@@ -147,7 +141,7 @@ export async function registerRoutes(
   app: Express
 ): Promise<Server> {
   // Setup authentication (must be before other routes)
-  await setupAuth(app);
+  setupAuth(app);
   registerAuthRoutes(app);
 
   // Dashboard endpoint
@@ -578,9 +572,9 @@ export async function registerRoutes(
     longitude: z.string().optional(),
     status: z.enum(['watching', 'offer_pending', 'under_contract', 'closed', 'passed']).optional(),
     notes: z.string().optional(),
-    purchasePrice: z.string().optional(),
-    offerAmount: z.string().optional(),
-    closingDate: z.string().optional(),
+    purchasePrice: z.number().optional(),
+    offerAmount: z.number().optional(),
+    closingDate: z.string().transform(s => new Date(s)).optional(),
   });
 
   app.patch("/api/properties/:id", isAuthenticated, async (req: Request, res: Response) => {

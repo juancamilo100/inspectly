@@ -5,6 +5,7 @@ import {
   downloads,
   properties,
   propertyReports,
+  users,
   CREDIT_VALUES,
   type Report, 
   type InsertReport,
@@ -18,6 +19,7 @@ import {
   type InsertProperty,
   type PropertyReport,
   type InsertPropertyReport,
+  type User,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, ne, sql, ilike } from "drizzle-orm";
@@ -64,6 +66,11 @@ export interface IStorage {
   getPropertyReports(propertyId: number): Promise<PropertyReport[]>;
   linkPropertyReport(link: InsertPropertyReport): Promise<PropertyReport>;
   unlinkPropertyReport(propertyId: number, reportId: number): Promise<void>;
+
+  // Users
+  getUserById(id: string): Promise<User | undefined>;
+  getUserByEmail(email: string): Promise<User | undefined>;
+  createUser(email: string, passwordHash: string, firstName?: string, lastName?: string): Promise<User>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -284,6 +291,27 @@ export class DatabaseStorage implements IStorage {
         eq(propertyReports.propertyId, propertyId),
         eq(propertyReports.reportId, reportId)
       ));
+  }
+
+  // Users
+  async getUserById(id: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.id, id));
+    return user;
+  }
+
+  async getUserByEmail(email: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.email, email.toLowerCase()));
+    return user;
+  }
+
+  async createUser(email: string, passwordHash: string, firstName?: string, lastName?: string): Promise<User> {
+    const [newUser] = await db.insert(users).values({
+      email: email.toLowerCase(),
+      passwordHash,
+      firstName,
+      lastName,
+    }).returning();
+    return newUser;
   }
 }
 

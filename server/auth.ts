@@ -87,7 +87,7 @@ export function registerAuthRoutes(app: Express): void {
         userId: user.id,
         amount: CREDIT_VALUES.SIGNUP_BONUS,
         type: "signup_bonus",
-        description: "Welcome bonus for joining InspectSwap!",
+        description: "Welcome bonus for joining Inspectly!",
       });
 
       req.session.userId = user.id;

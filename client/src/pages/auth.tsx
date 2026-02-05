@@ -36,7 +36,7 @@ export default function AuthPage() {
       } else {
         await register({ email, password, firstName, lastName });
         toast({
-          title: "Welcome to InspectSwap!",
+          title: "Welcome to Inspectly!",
           description: "Your account has been created with 50 free credits.",
         });
       }
@@ -60,7 +60,7 @@ export default function AuthPage() {
         <CardHeader className="text-center">
           <div className="flex items-center justify-center gap-2 mb-4">
             <FileText className="w-8 h-8 text-primary" />
-            <span className="text-2xl font-bold">InspectSwap</span>
+            <span className="text-2xl font-bold">Inspectly</span>
           </div>
           <CardTitle data-testid="text-auth-title">
             {isLogin ? "Sign In" : "Create Account"}

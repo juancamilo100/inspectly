@@ -80,7 +80,7 @@ export function AppSidebar({ creditBalance = 0 }: AppSidebarProps) {
             <div className="w-8 h-8 rounded-md bg-primary flex items-center justify-center">
               <FileText className="w-5 h-5 text-primary-foreground" />
             </div>
-            <span className="font-semibold text-lg">InspectSwap</span>
+            <span className="font-semibold text-lg">Inspectly</span>
           </div>
         </Link>
       </SidebarHeader>

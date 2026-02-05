@@ -1,8 +1,8 @@
-# InspectSwap - Real Estate Inspection Report Marketplace
+# Inspectly - Real Estate Inspection Report Marketplace
 
 ## Overview
 
-InspectSwap is a data-first marketplace for real estate investors to share and access property inspection reports. The platform transforms static PDF inspection reports into actionable intelligence through AI-powered analysis, providing negotiation strategies and estimated credit requests for property deals.
+Inspectly is a data-first marketplace for real estate investors to share and access property inspection reports. The platform transforms static PDF inspection reports into actionable intelligence through AI-powered analysis, providing negotiation strategies and estimated credit requests for property deals.
 
 Core value propositions:
 - **Smart Ingestion Engine**: Drag-and-drop PDF upload with AI extraction of property data, defects, and findings

@@ -76,7 +76,7 @@ export default function LandingPage() {
             <div className="w-8 h-8 rounded-md bg-primary flex items-center justify-center">
               <Upload className="w-5 h-5 text-primary-foreground" />
             </div>
-            <span className="font-semibold text-xl">InspectSwap</span>
+            <span className="font-semibold text-xl">Inspectly</span>
           </div>
           <div className="flex items-center gap-2">
             <ThemeToggle />
@@ -313,7 +313,7 @@ export default function LandingPage() {
               <div className="w-6 h-6 rounded bg-primary flex items-center justify-center">
                 <Upload className="w-4 h-4 text-primary-foreground" />
               </div>
-              <span>InspectSwap</span>
+              <span>Inspectly</span>
             </div>
             <p>Built for real estate investors, by real estate investors.</p>
           </div>

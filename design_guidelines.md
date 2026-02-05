@@ -1,4 +1,4 @@
-# Design Guidelines: InspectSwap (Real Estate Inspection Marketplace)
+# Design Guidelines: Inspectly (Real Estate Inspection Marketplace)
 
 ## Design Approach: Utility-First SaaS System
 

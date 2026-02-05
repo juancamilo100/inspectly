@@ -509,7 +509,7 @@ export async function registerRoutes(
         userId,
         amount: CREDIT_VALUES.SIGNUP_BONUS,
         type: 'signup_bonus',
-        description: 'Welcome bonus for joining InspectSwap!',
+        description: 'Welcome bonus for joining Inspectly!',
       });
 
       res.json({ credited: CREDIT_VALUES.SIGNUP_BONUS });

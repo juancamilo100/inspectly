@@ -1,97 +1,66 @@
 # Inspectly - Real Estate Inspection Report Marketplace
 
 ## Overview
+Inspectly is a data-first marketplace for real estate investors. It transforms static PDF inspection reports into actionable intelligence using AI, providing negotiation strategies and estimated credit requests for property deals. The platform features:
 
-Inspectly is a data-first marketplace for real estate investors to share and access property inspection reports. The platform transforms static PDF inspection reports into actionable intelligence through AI-powered analysis, providing negotiation strategies and estimated credit requests for property deals.
+-   **Smart Ingestion Engine**: AI-powered extraction of property data, defects, and findings from PDF reports.
+-   **AI Deal Coach**: Generates negotiation battlecards with talking points and estimated credit requests.
+-   **Karma Credit System**: A virtual currency system where users earn credits by uploading reports and spend them to access others' reports.
+-   **Bounty System**: Allows users to request reports for specific addresses by staking credits.
+-   **Digital Vault**: A property portfolio tracker with map view and deal status pipeline.
 
-Core value propositions:
-- **Smart Ingestion Engine**: Drag-and-drop PDF upload with AI extraction of property data, defects, and findings
-- **AI Deal Coach**: Generates negotiation battlecards with top talking points and estimated credit requests
-- **Karma Credit System**: Virtual currency earned by uploading reports and spent to access others' reports
-- **Redaction Shield**: Auto-redacts personal information before public sharing
-- **Bounty System**: Request reports for specific addresses with staked credits
+The project aims to revolutionize how real estate investors leverage inspection data, offering significant market potential by providing unique, AI-driven insights for property transactions.
 
 ## User Preferences
-
 Preferred communication style: Simple, everyday language.
 
 ## System Architecture
 
-### Frontend Architecture
-- **Framework**: React 18 with TypeScript
-- **Routing**: Wouter (lightweight React router)
-- **State Management**: TanStack Query for server state, React hooks for local state
-- **UI Components**: shadcn/ui component library with Radix UI primitives
-- **Styling**: Tailwind CSS with CSS variables for theming (light/dark mode support)
-- **Build Tool**: Vite with hot module replacement
+### Stack Summary
+-   **Frontend**: React 18, TypeScript, Vite, Tailwind CSS, shadcn/ui. Routing with Wouter, state management with TanStack Query v5 and React hooks.
+-   **Backend**: Node.js, Express, TypeScript (ESM).
+-   **Database**: PostgreSQL (Neon-backed) with Drizzle ORM.
+-   **Authentication**: Email/password using bcrypt, express-session, and connect-pg-simple.
+-   **AI**: OpenAI GPT-4o via Replit AI Integrations.
+-   **PDF Processing**: `pdf-parse` v2 for text extraction, `jsPDF` for client-side PDF generation.
+-   **Mapping**: Leaflet for the Digital Vault's map view.
 
-### Backend Architecture
-- **Runtime**: Node.js with Express
-- **Language**: TypeScript (ESM modules)
-- **API Style**: RESTful JSON APIs under `/api/*` prefix
-- **File Uploads**: Multer middleware for PDF handling (50MB limit)
-- **Authentication**: Replit Auth via OpenID Connect with Passport.js
-- **Session Management**: PostgreSQL-backed sessions via connect-pg-simple
+### UI/UX Decisions
+-   **Design System**: Leverages `shadcn/ui` for a consistent and modern look.
+-   **Theming**: Supports dark/light mode.
+-   **Battlecard View**: Presents AI analysis in a multi-tabbed interface (Breakdown, Scripts, Tactics, Alternatives, Summary) for comprehensive insights.
+-   **Property Tracker**: Digital Vault offers both list and map views for property portfolios.
 
-### Data Storage
-- **Database**: PostgreSQL with Drizzle ORM
-- **Schema Location**: `shared/schema.ts` defines all tables
-- **Key Tables**:
-  - `reports`: Inspection reports with AI-extracted data
-  - `credit_transactions`: Credit ledger for karma system
-  - `bounties`: Report requests with staked credits
-  - `downloads`: Track which users downloaded which reports
-  - `users`/`sessions`: Authentication tables (required for Replit Auth)
+### Technical Implementations
+-   **Authentication**: Custom email/password authentication with bcrypt hashing and session management via PostgreSQL. User IDs are UUID v4 strings.
+-   **PDF Upload & AI Analysis**:
+    -   Users upload PDFs which are validated and hashed to prevent duplicates.
+    -   `pdf-parse` extracts text, which is then truncated and sent to OpenAI's GPT-4o model.
+    -   OpenAI generates a structured JSON `AnalysisResult` (battlecard) based on a detailed system prompt.
+    -   The `AnalysisResult` is normalized and stored, with key fields also extracted for quick access.
+    -   Upon successful upload, users earn credits, and the system checks for and fulfills matching bounties.
+-   **Credit System**:
+    -   An append-only ledger (`credit_transactions` table) tracks all credit movements (signup bonuses, uploads, downloads, bounties).
+    -   User balance is always computed dynamically by summing transaction amounts.
+    -   Key credit values: Signup Bonus (50), Upload Reward (10), Download Cost (5), Minimum Bounty Stake (5).
+-   **Bounty System**: Users can create bounties for specific addresses. If a matching report is uploaded, the bounty is fulfilled, and credits are transferred.
+-   **Digital Vault**: Allows users to track properties, link reports, and manage deal statuses. Includes geocoding for map visualization.
 
-### AI Integration
-- **Provider**: OpenAI API (via Replit AI Integrations)
-- **Model**: GPT-4o for report analysis
-- **Features**: PDF content analysis, defect extraction, negotiation point generation
-
-### Project Structure
-```
-├── client/src/          # React frontend
-│   ├── components/      # UI components (shadcn/ui)
-│   ├── pages/           # Route pages
-│   ├── hooks/           # Custom React hooks
-│   └── lib/             # Utilities and query client
-├── server/              # Express backend
-│   ├── routes.ts        # API endpoints
-│   ├── storage.ts       # Database operations
-│   └── replit_integrations/  # Auth, chat, image utilities
-├── shared/              # Shared types and schema
-│   ├── schema.ts        # Drizzle database schema
-│   └── models/          # TypeScript models
-└── migrations/          # Database migrations
-```
-
-### Key Design Patterns
-- **Monorepo Structure**: Client and server in single repository with shared types
-- **Type Safety**: Drizzle-zod generates Zod schemas from database tables
-- **Path Aliases**: `@/` for client, `@shared/` for shared code
-- **Credit Economy**: Upload = earn credits, Download = spend credits (configurable in `CREDIT_VALUES`)
+### System Design Choices
+-   **Data-first approach**: Prioritizes the extraction and structuring of data from unstructured reports.
+-   **Micro-transaction economy**: Encourages user engagement and content contribution through the Karma Credit System.
+-   **Robust AI integration**: Uses `gpt-4o` with structured JSON output and comprehensive prompt engineering for reliable analysis.
+-   **Scalable database design**: Uses PostgreSQL with Drizzle ORM, with careful consideration for credit balance calculation (append-only ledger).
+-   **Frontend State Management**: TanStack Query is used for server state management, enabling efficient data fetching, caching, and invalidation.
 
 ## External Dependencies
 
-### Database
-- **PostgreSQL**: Primary database via `DATABASE_URL` environment variable
-- **Drizzle ORM**: Type-safe query builder and schema management
-
-### Authentication
-- **Replit Auth**: OpenID Connect provider for user authentication
-- **Required Env Vars**: `ISSUER_URL`, `REPL_ID`, `SESSION_SECRET`
-
-### AI Services
-- **OpenAI API**: Report analysis and negotiation generation
-- **Required Env Vars**: `AI_INTEGRATIONS_OPENAI_API_KEY`, `AI_INTEGRATIONS_OPENAI_BASE_URL`
-
-### Frontend Libraries
-- **TanStack Query**: Server state management with caching
-- **Radix UI**: Accessible component primitives
-- **Tailwind CSS**: Utility-first styling
-- **Lucide Icons**: Icon library
-
-### Development Tools
-- **Vite**: Dev server and production bundler
-- **esbuild**: Server bundling for production
-- **tsx**: TypeScript execution for development
+-   **PostgreSQL**: Primary database, hosted via Neon on Replit.
+-   **OpenAI GPT-4o**: AI model for PDF analysis and battlecard generation, integrated via Replit AI Integrations.
+-   **`pdf-parse` (v2)**: Library for extracting text content from PDF files.
+-   **`jsPDF`**: JavaScript library used client-side for generating PDF battlecards.
+-   **Leaflet**: Open-source JavaScript library for interactive maps in the Digital Vault.
+-   **`bcrypt`**: For hashing user passwords securely.
+-   **`express-session`**: Middleware for managing user sessions.
+-   **`connect-pg-simple`**: PostgreSQL-backed session store for Express.
+-   **Multer**: Middleware for handling `multipart/form-data`, primarily for file uploads.

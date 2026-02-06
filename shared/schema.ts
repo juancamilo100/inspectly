@@ -23,6 +23,8 @@ export const reports = pgTable("reports", {
   summaryFindings: text("summary_findings"),
   negotiationPoints: jsonb("negotiation_points").$type<string[]>(),
   estimatedCredit: integer("estimated_credit"),
+  /** Full AI analysis (battlecard): defect breakdown, scripts, tactics, etc. */
+  analysisJson: jsonb("analysis_json").$type<Record<string, unknown>>(),
   
   // Redaction status
   isRedacted: boolean("is_redacted").default(false),

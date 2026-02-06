@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link } from "wouter";
+import jsPDF from "jspdf";
 import { 
   FileText, 
   MapPin, 
@@ -34,6 +35,9 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import type { AIAnalysis } from "@/lib/battlecard";
+import { downloadBattlecardPDF } from "@/lib/battlecard";
+import { BattlecardView } from "@/components/battlecard-view";
 import type { Report } from "@shared/schema";
 
 interface MyReportsData {
@@ -41,10 +45,83 @@ interface MyReportsData {
   downloaded: Report[];
 }
 
+/** Export a minimal battlecard PDF from stored report data (no full analysis). */
+function downloadReportSummaryPdf(report: Report): void {
+  const doc = new jsPDF();
+  const margin = 20;
+  const maxWidth = doc.internal.pageSize.getWidth() - margin * 2;
+  let y = 20;
+
+  doc.setFontSize(18);
+  doc.setFont("helvetica", "bold");
+  doc.text("NEGOTIATION BATTLECARD", margin, y);
+  y += 10;
+  doc.setFontSize(12);
+  doc.setFont("helvetica", "normal");
+  doc.text(report.propertyAddress, margin, y);
+  y += 15;
+
+  if (report.estimatedCredit) {
+    doc.setFontSize(14);
+    doc.setFont("helvetica", "bold");
+    doc.text(`TOTAL CREDIT REQUEST: $${report.estimatedCredit.toLocaleString()}`, margin, y);
+    y += 15;
+  }
+
+  const defects = (report.majorDefects as string[]) || [];
+  if (defects.length > 0) {
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.text("MAJOR DEFECTS:", margin, y);
+    y += 8;
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    defects.forEach((d, i) => {
+      if (y > 270) { doc.addPage(); y = 20; }
+      doc.text(`${i + 1}. ${d}`, margin, y);
+      y += 6;
+    });
+    y += 5;
+  }
+
+  const points = (report.negotiationPoints as string[]) || [];
+  if (points.length > 0) {
+    if (y > 250) { doc.addPage(); y = 20; }
+    doc.setFont("helvetica", "bold");
+    doc.text("KEY NEGOTIATION POINTS:", margin, y);
+    y += 8;
+    doc.setFont("helvetica", "normal");
+    points.forEach((p, i) => {
+      if (y > 270) { doc.addPage(); y = 20; }
+      const lines = doc.splitTextToSize(`${i + 1}. ${p}`, maxWidth);
+      doc.text(lines, margin, y);
+      y += lines.length * 5 + 3;
+    });
+    y += 5;
+  }
+
+  if (report.summaryFindings) {
+    if (y > 240) { doc.addPage(); y = 20; }
+    doc.setFont("helvetica", "bold");
+    doc.text("SUMMARY:", margin, y);
+    y += 6;
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    const sumLines = doc.splitTextToSize(report.summaryFindings, maxWidth);
+    doc.text(sumLines, margin, y);
+  }
+
+  doc.setFontSize(8);
+  doc.text("Exported from Inspectly (summary). Full battlecard available after upload on Upload & Analyze.", margin, doc.internal.pageSize.getHeight() - 10);
+  doc.save(`battlecard-${report.propertyAddress.replace(/[^a-zA-Z0-9]/g, "-").toLowerCase()}.pdf`);
+}
+
 export default function MyReportsPage() {
   const { toast } = useToast();
   const [selectedReport, setSelectedReport] = useState<Report | null>(null);
   const [isAnalysisOpen, setIsAnalysisOpen] = useState(false);
+  const [analysisForSelected, setAnalysisForSelected] = useState<AIAnalysis | null>(null);
+  const [analysisLoading, setAnalysisLoading] = useState(false);
 
   const { data, isLoading, error } = useQuery<MyReportsData>({
     queryKey: ['/api/my-reports'],
@@ -73,8 +150,20 @@ export default function MyReportsPage() {
 
   const openAnalysis = (report: Report) => {
     setSelectedReport(report);
+    setAnalysisForSelected(null);
+    setAnalysisLoading(true);
     setIsAnalysisOpen(true);
   };
+
+  useEffect(() => {
+    if (!selectedReport || !isAnalysisOpen) return;
+    setAnalysisLoading(true);
+    fetch(`/api/reports/${selectedReport.id}/analysis`, { credentials: "include" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: AIAnalysis | null) => setAnalysisForSelected(data))
+      .catch(() => setAnalysisForSelected(null))
+      .finally(() => setAnalysisLoading(false));
+  }, [selectedReport?.id, isAnalysisOpen]);
 
   const ReportCard = ({ report, showActions = false }: { report: Report; showActions?: boolean }) => (
     <Card className="hover-elevate transition-all" data-testid={`card-my-report-${report.id}`}>
@@ -144,7 +233,12 @@ export default function MyReportsPage() {
             <Sparkles className="w-4 h-4 mr-1" />
             AI Analysis
           </Button>
-          <Button variant="ghost" size="sm" data-testid={`button-view-${report.id}`}>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => openAnalysis(report)}
+            data-testid={`button-view-${report.id}`}
+          >
             <Eye className="w-4 h-4" />
           </Button>
         </div>
@@ -242,88 +336,120 @@ export default function MyReportsPage() {
         </TabsContent>
       </Tabs>
 
-      {/* AI Analysis Dialog */}
-      <Dialog open={isAnalysisOpen} onOpenChange={setIsAnalysisOpen}>
-        <DialogContent className="max-w-2xl max-h-[90vh]">
+      {/* AI Analysis Dialog — full battlecard when analysis is stored, else summary */}
+      <Dialog
+        open={isAnalysisOpen}
+        onOpenChange={(open) => {
+          if (!open) setAnalysisForSelected(null);
+          setIsAnalysisOpen(open);
+        }}
+      >
+        <DialogContent className="max-w-3xl max-h-[90vh]">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Sparkles className="w-5 h-5 text-primary" />
-              AI Deal Coach Analysis
+              {analysisForSelected ? "Full Battlecard" : "AI Deal Coach Analysis"}
             </DialogTitle>
             <DialogDescription>
               {selectedReport?.propertyAddress}
             </DialogDescription>
           </DialogHeader>
-          
+
           {selectedReport && (
-            <ScrollArea className="max-h-[60vh] pr-4">
-              <div className="space-y-6">
-                {/* Negotiation Points */}
-                {selectedReport.negotiationPoints && (selectedReport.negotiationPoints as string[]).length > 0 && (
-                  <div>
-                    <h4 className="font-semibold mb-3 flex items-center gap-2">
-                      <div className="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center">
-                        <span className="text-xs font-bold text-primary">1</span>
+            <>
+              {analysisLoading ? (
+                <div className="py-8 flex justify-center">
+                  <Skeleton className="h-64 w-full" />
+                </div>
+              ) : analysisForSelected ? (
+                <ScrollArea className="max-h-[70vh] pr-4">
+                  <BattlecardView report={selectedReport} analysis={analysisForSelected} showActions />
+                </ScrollArea>
+              ) : (
+                <ScrollArea className="max-h-[60vh] pr-4">
+                  <div className="space-y-6">
+                    {selectedReport.negotiationPoints && (selectedReport.negotiationPoints as string[]).length > 0 && (
+                      <div>
+                        <h4 className="font-semibold mb-3 flex items-center gap-2">
+                          <div className="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center">
+                            <span className="text-xs font-bold text-primary">1</span>
+                          </div>
+                          Top Negotiation Points
+                        </h4>
+                        <ul className="space-y-2">
+                          {(selectedReport.negotiationPoints as string[]).map((point, i) => (
+                            <li key={i} className="flex items-start gap-2 text-sm">
+                              <Badge variant="outline" className="flex-shrink-0 mt-0.5">{i + 1}</Badge>
+                              <span>{point}</span>
+                            </li>
+                          ))}
+                        </ul>
                       </div>
-                      Top Negotiation Points
-                    </h4>
-                    <ul className="space-y-2">
-                      {(selectedReport.negotiationPoints as string[]).map((point, i) => (
-                        <li key={i} className="flex items-start gap-2 text-sm">
-                          <Badge variant="outline" className="flex-shrink-0 mt-0.5">{i + 1}</Badge>
-                          <span>{point}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-
-                {/* Major Defects */}
-                {selectedReport.majorDefects && (selectedReport.majorDefects as string[]).length > 0 && (
-                  <div>
-                    <h4 className="font-semibold mb-3 flex items-center gap-2">
-                      <div className="w-6 h-6 rounded-full bg-destructive/10 flex items-center justify-center">
-                        <AlertTriangle className="w-3 h-3 text-destructive" />
+                    )}
+                    {selectedReport.majorDefects && (selectedReport.majorDefects as string[]).length > 0 && (
+                      <div>
+                        <h4 className="font-semibold mb-3 flex items-center gap-2">
+                          <div className="w-6 h-6 rounded-full bg-destructive/10 flex items-center justify-center">
+                            <AlertTriangle className="w-3 h-3 text-destructive" />
+                          </div>
+                          Major Defects Identified
+                        </h4>
+                        <ul className="space-y-2">
+                          {(selectedReport.majorDefects as string[]).map((defect, i) => (
+                            <li key={i} className="flex items-start gap-2 text-sm">
+                              <span className="w-1.5 h-1.5 rounded-full bg-destructive mt-2 flex-shrink-0" />
+                              <span>{defect}</span>
+                            </li>
+                          ))}
+                        </ul>
                       </div>
-                      Major Defects Identified
-                    </h4>
-                    <ul className="space-y-2">
-                      {(selectedReport.majorDefects as string[]).map((defect, i) => (
-                        <li key={i} className="flex items-start gap-2 text-sm">
-                          <span className="w-1.5 h-1.5 rounded-full bg-destructive mt-2 flex-shrink-0" />
-                          <span>{defect}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-
-                {/* Estimated Credit Request */}
-                {selectedReport.estimatedCredit && (
-                  <Card className="bg-primary/5 border-primary/20">
-                    <CardContent className="p-4">
-                      <h4 className="font-semibold mb-2">Estimated Credit Request</h4>
-                      <p className="text-3xl font-bold text-primary font-mono">
-                        ${selectedReport.estimatedCredit.toLocaleString()}
-                      </p>
-                      <p className="text-sm text-muted-foreground mt-1">
-                        Based on the identified defects and repair estimates
-                      </p>
-                    </CardContent>
-                  </Card>
-                )}
-
-                {/* Summary */}
-                {selectedReport.summaryFindings && (
-                  <div>
-                    <h4 className="font-semibold mb-3">Summary</h4>
-                    <p className="text-sm text-muted-foreground leading-relaxed">
-                      {selectedReport.summaryFindings}
+                    )}
+                    {selectedReport.estimatedCredit && (
+                      <Card className="bg-primary/5 border-primary/20">
+                        <CardContent className="p-4">
+                          <h4 className="font-semibold mb-2">Estimated Credit Request</h4>
+                          <p className="text-3xl font-bold text-primary font-mono">
+                            ${selectedReport.estimatedCredit.toLocaleString()}
+                          </p>
+                          <p className="text-sm text-muted-foreground mt-1">
+                            Based on the identified defects and repair estimates
+                          </p>
+                        </CardContent>
+                      </Card>
+                    )}
+                    {selectedReport.summaryFindings && (
+                      <div>
+                        <h4 className="font-semibold mb-3">Summary</h4>
+                        <p className="text-sm text-muted-foreground leading-relaxed">
+                          {selectedReport.summaryFindings}
+                        </p>
+                      </div>
+                    )}
+                    <p className="text-xs text-muted-foreground pt-2 border-t">
+                      No full battlecard stored for this report. New uploads save the full analysis for viewing here.
                     </p>
                   </div>
-                )}
+                </ScrollArea>
+              )}
+              <div className="flex justify-end gap-2 pt-4 border-t mt-4">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    if (analysisForSelected) {
+                      downloadBattlecardPDF(analysisForSelected, selectedReport.propertyAddress);
+                    } else {
+                      downloadReportSummaryPdf(selectedReport);
+                    }
+                    toast({ title: "PDF downloaded" });
+                  }}
+                  data-testid="button-export-pdf"
+                >
+                  <Download className="w-4 h-4 mr-1" />
+                  {analysisForSelected ? "Export full battlecard PDF" : "Export summary PDF"}
+                </Button>
               </div>
-            </ScrollArea>
+            </>
           )}
         </DialogContent>
       </Dialog>

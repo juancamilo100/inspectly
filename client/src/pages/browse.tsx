@@ -60,11 +60,16 @@ export default function BrowsePage() {
     },
     onSuccess: () => {
       toast({
-        title: "Report unlocked!",
-        description: "-5 credits. Check your downloads.",
+        title: "Report unlocked",
+        description: "View it in My Reports. -5 credits.",
       });
       queryClient.invalidateQueries({ queryKey: ['/api/dashboard'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/credits'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/my-reports'] });
       queryClient.invalidateQueries({ queryKey: ['/api/reports'] });
+      queryClient.refetchQueries({ queryKey: ['/api/dashboard'] });
+      queryClient.refetchQueries({ queryKey: ['/api/my-reports'] });
+      queryClient.refetchQueries({ queryKey: ['/api/reports'] });
     },
     onError: (error: Error) => {
       toast({
@@ -255,20 +260,25 @@ export default function BrowsePage() {
                 </div>
 
                 {/* Actions */}
-                <div className="flex items-center justify-between gap-2 pt-2 border-t">
-                  <Badge variant="secondary" className="text-xs">
-                    <Coins className="w-3 h-3 mr-1" />
-                    5 credits
-                  </Badge>
-                  <Button 
-                    size="sm"
-                    onClick={() => downloadMutation.mutate(report.id)}
-                    disabled={downloadMutation.isPending}
-                    data-testid={`button-download-${report.id}`}
-                  >
-                    <Download className="w-4 h-4 mr-1" />
-                    Download
-                  </Button>
+                <div className="flex flex-col gap-1.5 pt-2 border-t">
+                  <div className="flex items-center justify-between gap-2">
+                    <Badge variant="secondary" className="text-xs">
+                      <Coins className="w-3 h-3 mr-1" />
+                      5 credits
+                    </Badge>
+                    <Button 
+                      size="sm"
+                      onClick={() => downloadMutation.mutate(report.id)}
+                      disabled={downloadMutation.isPending}
+                      data-testid={`button-download-${report.id}`}
+                    >
+                      <Download className="w-4 h-4 mr-1" />
+                      Unlock
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Unlock to view and export in My Reports.
+                  </p>
                 </div>
               </CardContent>
             </Card>

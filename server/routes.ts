@@ -3,6 +3,7 @@ import { createServer, type Server } from "http";
 import multer from "multer";
 import crypto from "crypto";
 import OpenAI from "openai";
+import { PDFParse } from "pdf-parse";
 import { storage } from "./storage";
 import { setupAuth, isAuthenticated, registerAuthRoutes, getUserId } from "./auth";
 import { CREDIT_VALUES, insertPropertySchema, insertPropertyReportSchema } from "@shared/schema";
@@ -148,15 +149,16 @@ Field rules:
 - marketLeverageNotes: Short note on using DOM, price reductions, comps, or market conditions if relevant; else "Use local comps and DOM to reinforce urgency."
 }`;
 
-async function analyzeReport(fileName: string): Promise<AnalysisResult> {
+async function analyzeReport(fileName: string, pdfText: string): Promise<AnalysisResult> {
   try {
+    const truncatedText = pdfText.slice(0, 30000);
     const response = await openai.chat.completions.create({
       model: "gpt-4o",
       messages: [
         { role: "system", content: BATTLECARD_SYSTEM_PROMPT },
         {
           role: "user",
-          content: `Analyze this inspection report (filename: ${fileName}). Generate a complete negotiation battlecard with per-defect breakdowns (including estimatedRepairRange, anchorHighAmount, consequentialDamageRisk, remainingUsefulLife, sellerScript, collaborativeScript, nuclearScript, lenderImplication, codeComplianceNote), killShotSummary, psychologicalLeverage, creativeAlternatives, calibratedQuestions, accusationAudit, walkawayScript, nibbleAsks, disclosureWarning, and marketLeverageNotes. Be aggressive and investor-grade. Output valid JSON only.`,
+          content: `Analyze the following property inspection report and generate a complete negotiation battlecard. Be aggressive and investor-grade. Output valid JSON only.\n\nFilename: ${fileName}\n\n--- INSPECTION REPORT CONTENT ---\n${truncatedText}`,
         },
       ],
       response_format: { type: "json_object" },
@@ -363,8 +365,20 @@ export async function registerRoutes(
         return res.status(400).json({ error: "This report has already been uploaded" });
       }
 
-      // Run AI analysis
-      const analysis = await analyzeReport(file.originalname);
+      // Extract text from PDF
+      let pdfText = '';
+      try {
+        const parser = new PDFParse({ data: new Uint8Array(file.buffer) });
+        const textResult = await parser.getText();
+        pdfText = textResult.text || '';
+        await parser.destroy();
+      } catch (pdfError) {
+        console.error("PDF parse error:", pdfError);
+        pdfText = `[PDF text extraction failed for file: ${file.originalname}]`;
+      }
+
+      // Run AI analysis with actual PDF content
+      const analysis = await analyzeReport(file.originalname, pdfText);
 
       // Create the report (persist full analysis for View / My Reports battlecard)
       const report = await storage.createReport({

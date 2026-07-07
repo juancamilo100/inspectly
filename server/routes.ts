@@ -54,6 +54,7 @@ interface CreativeAlternative {
 }
 
 interface AnalysisResult {
+  propertyAddress: string;
   majorDefects: string[];
   summaryFindings: string;
   negotiationPoints: string[];
@@ -148,6 +149,7 @@ Think step-by-step: inventory every finding in the report; assign each to a kill
 Required JSON structure:
 
 {
+  "propertyAddress": "string",
   "majorDefects": ["string", "..."],
   "summaryFindings": "string",
   "negotiationPoints": ["string", "..."],
@@ -193,6 +195,7 @@ Required JSON structure:
 }
 
 Field rules:
+- propertyAddress: The exact street address of the SUBJECT property being inspected — copy it verbatim from the report (street, city, state, ZIP as available). This is the property inspected, NOT the inspector's office, the inspection company, or the client's mailing address; when several addresses appear, choose the one labeled the subject/inspected property. This same address anchors your cost localization. If the report does not state a subject-property address, return an empty string "" — never guess.
 - majorDefects: 3-10 short defect labels, ordered by leverage — kill-vector items (insurability, financeability, disclosure) first, not by repair cost.
 - summaryFindings: One paragraph: overall condition, cumulative repair exposure in dollars, and which findings block insurance or financing.
 - negotiationPoints: 5-10 talking points, each tied to a SPECIFIC finding plus why it has teeth (carrier refusal, lender-required repair, disclosure attachment, cascading damage, carrying costs).
@@ -212,6 +215,34 @@ Field rules:
 - disclosureWarning: One paragraph stating — as fact, not threat — that these documented findings now attach to the property: in most states the seller must disclose them to every future buyer, and the next buyer's inspector will find them anyway. Frame: settling with this buyer is cheaper than repricing for all buyers.
 - marketLeverageNotes: How to weaponize days on market, price-reduction history, comps, season, and market direction for THIS negotiation; if the report gives no market clues, list the exact data the buyer should pull before the call (DOM, list-price history, pending comps, seller's purchase date and price).
 }`;
+
+// Best-effort extraction of the subject-property address from raw report text.
+// Fallback for when the AI does not return one (e.g. the AI call itself failed).
+// Targets labeled lines common to inspection reports rather than a loose street
+// regex, so it does not accidentally grab the inspector's own office address.
+function extractAddressFromText(pdfText: string): string {
+  if (!pdfText) return '';
+  const labels = [
+    'property address', 'subject property', 'inspection address',
+    'property inspected', 'address of property', 'site address', 'inspected property',
+  ];
+  const lines = pdfText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  for (let i = 0; i < lines.length; i++) {
+    const lower = lines[i].toLowerCase();
+    for (const label of labels) {
+      const idx = lower.indexOf(label);
+      if (idx === -1) continue;
+      // Address may follow the label on the same line, or sit on the next line.
+      let candidate = lines[i].slice(idx + label.length).replace(/^[:\-\s]+/, '').trim();
+      if (candidate.length < 6 && i + 1 < lines.length) candidate = lines[i + 1].trim();
+      // Sanity check: plausible length and contains a digit (street number or ZIP).
+      if (candidate.length >= 6 && candidate.length <= 120 && /\d/.test(candidate)) {
+        return candidate;
+      }
+    }
+  }
+  return '';
+}
 
 async function analyzeReport(fileName: string, pdfText: string): Promise<AnalysisResult> {
   try {
@@ -294,6 +325,7 @@ async function analyzeReport(fileName: string, pdfText: string): Promise<Analysi
       : [];
 
     return {
+      propertyAddress: String(parsed.propertyAddress ?? '').trim(),
       majorDefects: Array.isArray(parsed.majorDefects) ? parsed.majorDefects : (defectBreakdown.map(d => d.issue)),
       summaryFindings: String(parsed.summaryFindings ?? 'Property condition summary not available.'),
       negotiationPoints: Array.isArray(parsed.negotiationPoints) ? parsed.negotiationPoints : ['Request seller credit for material defects', 'Negotiate repair allowances where appropriate'],
@@ -350,6 +382,7 @@ async function analyzeReport(fileName: string, pdfText: string): Promise<Analysi
       },
     ];
     return {
+      propertyAddress: '',
       majorDefects: ["Roof needs inspection", "Plumbing requires evaluation"],
       summaryFindings: "Property requires professional assessment of key systems.",
       negotiationPoints: ["Request seller credit for material defects", "Negotiate repair allowances"],
@@ -445,10 +478,20 @@ export async function registerRoutes(
       // Run AI analysis with actual PDF content
       const analysis = await analyzeReport(file.originalname, pdfText);
 
+      // Resolve the property address from the DOCUMENT, not the filename.
+      // Priority: AI-extracted (reads full report) -> labeled-text regex
+      // (survives AI failure) -> cleaned filename -> placeholder.
+      const filenameAddress = file.originalname.replace(/\.pdf$/i, '').replace(/_/g, ' ').trim();
+      const propertyAddress =
+        (analysis.propertyAddress && analysis.propertyAddress.trim()) ||
+        extractAddressFromText(pdfText) ||
+        filenameAddress ||
+        "Unknown Address";
+
       // Create the report (persist full analysis for View / My Reports battlecard)
       const report = await storage.createReport({
         userId,
-        propertyAddress: file.originalname.replace('.pdf', '').replace(/_/g, ' ') || "Unknown Address",
+        propertyAddress,
         fileHash,
         fileName: file.originalname,
         fileSize: file.size,

@@ -90,7 +90,7 @@ CRITICAL: User IDs are VARCHAR UUIDs. All FKs use varchar type.
 ### reports
 - id: serial PK
 - user_id: varchar NOT NULL (no DB FK constraint)
-- property_address: text NOT NULL (derived from filename, NOT from PDF content)
+- property_address: text NOT NULL (resolved at upload: AI-extracted from report content -> labeled-text regex fallback -> cleaned filename -> "Unknown Address")
 - inspection_date: timestamp nullable (ALWAYS null, never set during upload)
 - file_hash: text NOT NULL UNIQUE (SHA-256, global dedup across all users)
 - file_name: text, file_size: integer
@@ -170,7 +170,7 @@ Balance = COALESCE(SUM(amount), 0). War Chest = Math.floor(balance / 5).
 - System prompt: BATTLECARD_SYSTEM_PROMPT — elite-investor persona plus a research-backed doctrine: three "kill vectors" (insurability: FPE/Zinsco/Challenger/Pushmatic panels, roof age, 4-point inspection items; financeability: FHA/VA minimum property requirements as hard closing blockers; disclosure: findings legally attach to the property in most states), credit-vs-price-cut arbitrage with lender credit caps, seller-funded rate buydowns, 1.5x escrow holdbacks, Voss/Ackerman negotiation mechanics, scripted answers to seller counterpunches, multifamily per-door/NOI mode, and an explicit legal line (disclosure stated as fact never threat; no report-to-authorities scripts). JSON schema unchanged from v1.
 
 ### AnalysisResult Type (analysis_json)
-majorDefects (string[]), summaryFindings, negotiationPoints (string[]), estimatedCredit, defectBreakdown (DefectBreakdown[]), openingStatement, closingStatement, anchorAmount, walkawayThreshold, killShotSummary, psychologicalLeverage (string[]), creativeAlternatives (CreativeAlternative[]), calibratedQuestions (string[]), accusationAudit, walkawayScript, nibbleAsks (string[]), disclosureWarning, marketLeverageNotes.
+propertyAddress (subject-property address extracted from report; "" if absent), majorDefects (string[]), summaryFindings, negotiationPoints (string[]), estimatedCredit, defectBreakdown (DefectBreakdown[]), openingStatement, closingStatement, anchorAmount, walkawayThreshold, killShotSummary, psychologicalLeverage (string[]), creativeAlternatives (CreativeAlternative[]), calibratedQuestions (string[]), accusationAudit, walkawayScript, nibbleAsks (string[]), disclosureWarning, marketLeverageNotes.
 
 DefectBreakdown: issue, severity (critical/major/moderate/monitor), estimatedRepairCost, estimatedRepairRange, creditRecommendation, anchorHighAmount, consequentialDamageRisk, remainingUsefulLife, repairVsCredit, sellerScript, collaborativeScript, nuclearScript, lenderImplication, codeComplianceNote.
 
@@ -230,7 +230,7 @@ Key methods: getPublicReports (ILIKE, createdAt DESC), getReportByHash (dedup), 
 
 1. Legacy reports (IDs 1-4): null analysis_json. Must re-upload.
 2. Schema bug: reportsRelations self-references reports instead of users.
-3. Property address from filename only, not PDF content.
+3. RESOLVED: Property address now extracted from report content (AI field + labeled-text regex fallback), with cleaned filename only as last resort. reports.property_address still a single text column (no structured city/state/zip — potential follow-up).
 4. No file storage: PDF buffers not persisted.
 5. Global duplicate: file_hash prevents same PDF by ANY user.
 6. Fuzzy bounty matching: ILIKE wildcards may false-match.

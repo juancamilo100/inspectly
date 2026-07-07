@@ -22,11 +22,16 @@ const upload = multer({
   },
 });
 
-// OpenAI client for AI analysis
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+// OpenAI client for AI analysis.
+// Prefer a direct OpenAI key (post-Replit); fall back to the Replit AI proxy
+// during the migration so the app keeps working on Replit until cutover.
+// TODO(migration): drop the AI_INTEGRATIONS_* fallback once fully on Vercel.
+const openai = process.env.OPENAI_API_KEY
+  ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+  : new OpenAI({
+      apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
+      baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
+    });
 
 // Enhanced defect type with cost breakdown and multi-strategy scripts
 interface DefectBreakdown {

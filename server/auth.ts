@@ -28,6 +28,13 @@ const loginSchema = z.object({
 });
 
 export function setupAuth(app: Express): void {
+  const sessionSecret = process.env.SESSION_SECRET;
+  if (!sessionSecret) {
+    throw new Error(
+      "SESSION_SECRET must be set. Refusing to start with an insecure hardcoded fallback.",
+    );
+  }
+
   const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
   });
@@ -39,7 +46,7 @@ export function setupAuth(app: Express): void {
         tableName: "sessions",
         createTableIfMissing: true,
       }),
-      secret: process.env.SESSION_SECRET || "inspectswap-secret-key",
+      secret: sessionSecret,
       resave: false,
       saveUninitialized: false,
       cookie: {

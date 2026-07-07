@@ -4,3 +4,9 @@ dist
 server/public
 vite.config.ts.*
 *.tar.gz
+
+# Environment files — never commit secrets
+.env
+.env.*
+!.env.example
+.vercel

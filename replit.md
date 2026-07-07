@@ -24,7 +24,7 @@ Preferred communication style: Simple, everyday language.
 - AI_INTEGRATIONS_OPENAI_BASE_URL: OpenAI base URL
 
 ### Core Features and Design Decisions
-- **AI Analysis Pipeline**: PDF uploads are processed by Multer, hashed, and text-extracted via pdf-parse v2 class API (new PDFParse, getText, destroy). Truncated text (30k chars max) is sent to OpenAI GPT-4o with BATTLECARD_SYSTEM_PROMPT defining JSON schema for AnalysisResult. The parsed JSON is normalized with fallback defaults and stored in analysis_json column. A hardcoded fallback analysis (2 generic defects, $3k credit) is returned if the AI call fails entirely.
+- **AI Analysis Pipeline**: PDF uploads are processed by Multer, hashed, and text-extracted via pdf-parse v2 class API (new PDFParse, getText, destroy). Truncated text (80k chars max) is sent to OpenAI GPT-4o (max_completion_tokens 16000, temperature 0.7) with BATTLECARD_SYSTEM_PROMPT — a research-backed negotiation doctrine (kill vectors: insurability/financeability/disclosure; credit-vs-price-cut arbitrage; Voss/Ackerman tactics; seller counterpunch responses; multifamily per-door mode; hard legal line against extortion-adjacent scripts) — defining the JSON schema for AnalysisResult. The parsed JSON is normalized with fallback defaults and stored in analysis_json column. A hardcoded fallback analysis (2 generic defects, $3k credit) is returned if the AI call fails entirely.
 - **Credit Economy**: Append-only ledger in credit_transactions table. Balance = SUM(amount). Signup bonus: 50, Upload reward: 10, Download cost: 5, Min bounty stake: 5. Constants in CREDIT_VALUES (shared/schema.ts).
 - **Authentication System**: Email/password with bcrypt (10 rounds) and PostgreSQL session storage. Session secret falls back to hardcoded string. isAuthenticated middleware protects all non-auth API routes.
 - **Digital Vault**: Property portfolio tracker with list/map views, CRUD, and report linking via property_reports join table.
@@ -163,11 +163,11 @@ Balance = COALESCE(SUM(amount), 0). War Chest = Math.floor(balance / 5).
 ### PDF Processing
 - pdf-parse v2 class API: new PDFParse({ data: new Uint8Array(buffer) }), getText(), destroy()
 - Extraction failure fallback: placeholder text about failure
-- Text truncated to 30,000 chars
+- Text truncated to 80,000 chars
 
 ### OpenAI Call
-- Model: gpt-4o, response_format: json_object, max_tokens: 4096
-- System prompt: BATTLECARD_SYSTEM_PROMPT with "ruthless real estate investor" persona and JSON schema
+- Model: gpt-4o, response_format: json_object, max_completion_tokens: 16000, temperature: 0.7
+- System prompt: BATTLECARD_SYSTEM_PROMPT — elite-investor persona plus a research-backed doctrine: three "kill vectors" (insurability: FPE/Zinsco/Challenger/Pushmatic panels, roof age, 4-point inspection items; financeability: FHA/VA minimum property requirements as hard closing blockers; disclosure: findings legally attach to the property in most states), credit-vs-price-cut arbitrage with lender credit caps, seller-funded rate buydowns, 1.5x escrow holdbacks, Voss/Ackerman negotiation mechanics, scripted answers to seller counterpunches, multifamily per-door/NOI mode, and an explicit legal line (disclosure stated as fact never threat; no report-to-authorities scripts). JSON schema unchanged from v1.
 
 ### AnalysisResult Type (analysis_json)
 majorDefects (string[]), summaryFindings, negotiationPoints (string[]), estimatedCredit, defectBreakdown (DefectBreakdown[]), openingStatement, closingStatement, anchorAmount, walkawayThreshold, killShotSummary, psychologicalLeverage (string[]), creativeAlternatives (CreativeAlternative[]), calibratedQuestions (string[]), accusationAudit, walkawayScript, nibbleAsks (string[]), disclosureWarning, marketLeverageNotes.

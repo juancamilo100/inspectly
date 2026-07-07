@@ -1,11 +1,12 @@
 # Inspectly: Migration off Replit → Vercel + Neon
 
-> Status: **in progress — Phase 1 complete.** This document is the result of a deep read of the repo (July 2026) plus current Vercel/Neon platform research. Read the Executive Summary and the "Pivotal decision" section first, then the detail sections.
+> Status: **in progress — Phase 1 + Phase 2 code complete; manual-cloud steps remain.** Read the Executive Summary, the "Pivotal decision" section, and §10 (cloud runbook) first.
 >
 > **Decisions locked (2026-07-07):**
 > 1. Architecture → **Option A: all-in on Vercel** (Express-as-single-function + Vercel Blob uploads + Neon).
-> 2. Sessions → **stateless JWT cookies** (replacing `connect-pg-simple`), done in the auth phase.
-> 3. **Phase 1 (de-Replit cleanup) is done** — see §8; the app is now Replit-code-free and `tsc`/`build` clean, still runnable anywhere.
+> 2. Sessions → **stateless JWT cookies** (replacing `connect-pg-simple`) — DONE.
+> 3. **Phase 1 (de-Replit cleanup) — DONE.**
+> 4. **Phase 2 (code) — DONE:** JWT auth, Neon HTTP driver, versioned migrations, serverless adapter (`api/index.ts` + `vercel.json`), and Vercel Blob client-upload (which also persists PDFs). `tsc` + `npm run build` green; the built bundle exports `createApp` as a named export. The remaining work is the **manual Vercel/Neon setup in §10** and answering the two open questions there.
 
 ---
 
@@ -206,3 +207,54 @@ Resolved (2026-07-07):
 Still open (decide before the relevant phase):
 3. **Vercel plan:** Hobby (300s duration cap, no custom envs) may suffice short-term, but **Pro** is likely needed for 800s headroom + a first-class `staging` custom environment.
 4. **Async analysis:** synchronous-within-Fluid-Compute for v1 (simple) vs an async enqueue+poll design (robust, more work) — recommend deferring to post-migration.
+
+---
+
+## 10. Manual-cloud runbook (do these in Vercel/Neon — code is already done)
+
+The Phase 2 code is committed. To actually deploy, do the following in order. These require your Vercel/Neon accounts and cannot be done from the repo.
+
+**A. Neon — create the database**
+1. Create a Neon project in the region matching your Vercel function region. Its default branch `main` is production.
+2. Create a long-lived `staging` branch (parent = `main`). Do NOT pre-create preview branches — the Vercel integration makes one per preview deploy automatically.
+
+**B. Vercel — connect Neon + enable preview branching**
+3. From the Vercel Marketplace, install/connect **Neon** to the project; select Development, Preview, and Production to receive DB vars; under Advanced/Deployments enable **Preview Branching**. This injects `DATABASE_URL` (pooled `-pooler`) and `DATABASE_URL_UNPOOLED` (direct) per environment, and auto-creates/destroys a branch per preview.
+
+**C. Vercel — create the project**
+4. Add New → Project → import the GitHub repo. Framework Preset = **Other** (`vercel.json` already sets `framework: null`, `buildCommand: "npm run db:migrate && npm run build"`, `outputDirectory: "dist/public"`). Node.js Version = **20.x**. Ensure **Fluid Compute** is enabled (default in 2026; needed for the 300s `maxDuration`).
+5. ⚠️ `drizzle-kit` is a devDependency and the build runs `db:migrate`. If Vercel sets `NODE_ENV=production` at build time, npm skips devDependencies and `db:migrate` fails. Mitigate with **one** of: override Install Command to `npm install --include=dev`; or change `buildCommand` to `npx --yes drizzle-kit migrate && npm run build`; or move `drizzle-kit` to `dependencies`.
+
+**D. Vercel — environment variables** (Settings → Environment Variables, scoped per environment)
+6. Set `SESSION_SECRET` (unique per env: `openssl rand -base64 32`) and `OPENAI_API_KEY`. `DATABASE_URL` / `DATABASE_URL_UNPOOLED` come from the Neon integration (main → Production, fresh branch → each Preview). For a custom `staging` environment (needs Vercel **Pro**), point them at the Neon `staging` branch.
+7. Do NOT set `NODE_ENV` by hand (Vercel manages it; the auth cookie's `secure` flag keys off it). Delete the Replit-era vars: `AI_INTEGRATIONS_OPENAI_API_KEY`, `AI_INTEGRATIONS_OPENAI_BASE_URL`, `PORT`.
+
+**E. Vercel Blob — private store**
+8. Create a Blob store with **private** access (reports are paywalled) and connect it. This injects `BLOB_READ_WRITE_TOKEN` into all environments. `handleUpload()` and `get({access:'private'})` FAIL without it, so every upload 400s until this exists.
+
+**F. Database baseline (CONDITIONAL — see Open Question 1)**
+9. If you IMPORT existing data into Neon `main` (so tables already exist): run `DATABASE_URL_UNPOOLED=<neon main direct URL> npm run db:baseline` ONCE against `main` to record `0000` as applied. Branches copied from `main` inherit the baseline row, so they then apply only `0001+`. If you start **fresh** (no import): SKIP baseline — the first deploy's `db:migrate` runs `0000` (create all tables) then `0001` (add `file_url`). Never run `db:push` against prod/staging/preview.
+
+**Local dev:** `vercel link` then `vercel env pull .env.local` (pulls `DATABASE_URL`, `BLOB_READ_WRITE_TOKEN`, etc.). Run `npm run dev` (the `!VERCEL` branch listens on `PORT`). `.env.example` documents every variable.
+
+### Two questions I need answered to finish
+1. **Import existing data or start fresh?** "Nothing in production" suggests **fresh** → skip the baseline (step 9). Confirm.
+2. **Vercel Hobby or Pro?** Hobby works (300s `maxDuration`, per-preview Neon branching) but has **no custom `staging` environment**. Pro gives the dedicated `staging` env + up to 800s. The `staging`-branch strategy above assumes Pro.
+
+### Post-review fixes applied (adversarial review, 2026-07-07)
+A 4-angle adversarial review ran over the Phase 2 diff. Fixed:
+- **Data loss (CONFIRMED):** the upload catch's `del(blobUrl)` ran even after `createReport` committed, deleting a PDF a live report referenced (and locking out re-ingest via the hash dedup). Now guarded by a `reportPersisted` flag — the blob is only deleted when no report was persisted.
+- **Function crash (CONFIRMED):** the `/file` endpoint's `Readable.fromWeb(...).pipe(res)` had no error handling (uncatchable async `'error'`). Now uses `stream/promises` `pipeline()` with `headersSent`-aware error handling.
+- **Frozen progress bar (CONFIRMED):** the browser→Blob transfer now drives an `onUploadProgress` callback (20–60% band) instead of sitting at 20%.
+- **TOCTOU (PLAUSIBLE):** concurrent identical uploads now return the friendly 400 (unique-violation detection) instead of a generic 500.
+- **Robustness:** `isAuthenticated` async middleware wrapped in try/catch → `next(err)`; `api/index.ts` clears a rejected `appPromise` so cold-start failures can retry.
+- **Cleanup (CONFIRMED):** removed the now-dead `passport`, `passport-local`, `openid-client`, `memorystore` deps + their build-allowlist entries.
+
+### Documented accepted risks / follow-ups (not blocking)
+- **JWT has no server-side revocation** (accepted consequence of the JWT decision): logout only clears the local cookie; a captured token stays valid until expiry (30d). Force-logout would need a token blocklist or a `tokenVersion` claim checked against the user row. Rotating `SESSION_SECRET` invalidates all tokens at once.
+- **`blobUrl` is not server-bound to the uploader** (PLAUSIBLE, low severity — gated by the unguessable `addRandomSuffix` URL): `POST /api/reports/upload` trusts the caller's cookie for attribution and the client-supplied `blobUrl`. A full fix persists a token→user mapping in `onUploadCompleted` (which, per the design, doesn't fire on localhost and retries on non-2xx — hence deferred).
+- **Same-origin requirement:** the `@vercel/blob` client's sub-request to `/api/blob/upload-token` only carries the auth cookie if the SPA and API share an origin. Keep them on one Vercel domain (they are by default); a split `api.` host would 401 all uploads.
+- Dead `sessions` table still defined in `shared/models/auth.ts` (unused under JWT) — optional prune.
+- The `reportsRelations` self-reference bug (`shared/schema.ts`) — pre-existing, no runtime impact.
+- Wire a "Download PDF" button in the client to the new `GET /api/reports/:id/file` endpoint (backend serves stored PDFs; the UI doesn't call it yet).
+- The OpenAI client is constructed at module load in `routes.ts` — throws if no key is present. Fine on Vercel (key is set), latent fragility.

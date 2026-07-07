@@ -1,8 +1,6 @@
-import { drizzle } from "drizzle-orm/node-postgres";
-import pg from "pg";
+import { neon } from "@neondatabase/serverless";
+import { drizzle } from "drizzle-orm/neon-http";
 import * as schema from "@shared/schema";
-
-const { Pool } = pg;
 
 if (!process.env.DATABASE_URL) {
   throw new Error(
@@ -10,5 +8,8 @@ if (!process.env.DATABASE_URL) {
   );
 }
 
-export const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-export const db = drizzle(pool, { schema });
+// Neon serverless HTTP driver: stateless (no socket/pool held open), so a
+// module-scope singleton is safe across warm/Fluid serverless invocations.
+// DATABASE_URL must be Neon's POOLED (-pooler) connection string at runtime.
+const sql = neon(process.env.DATABASE_URL);
+export const db = drizzle({ client: sql, schema });

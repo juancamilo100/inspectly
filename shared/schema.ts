@@ -17,7 +17,9 @@ export const reports = pgTable("reports", {
   fileHash: text("file_hash").notNull().unique(),
   fileName: text("file_name").notNull(),
   fileSize: integer("file_size").notNull(),
-  
+  /** Vercel Blob URL of the stored PDF (nullable: legacy rows predate storage). */
+  fileUrl: text("file_url"),
+
   // AI-extracted data
   majorDefects: jsonb("major_defects").$type<string[]>(),
   summaryFindings: text("summary_findings"),

@@ -1,18 +1,35 @@
 import type { Express, Request, Response, NextFunction } from "express";
-import session from "express-session";
+import cookieParser from "cookie-parser";
 import bcrypt from "bcrypt";
+import { SignJWT, jwtVerify } from "jose";
 import { storage } from "./storage";
 import { CREDIT_VALUES } from "@shared/schema";
-import connectPgSimple from "connect-pg-simple";
-import { Pool } from "pg";
 import { z } from "zod";
 
-const PgStore = connectPgSimple(session);
+// Stateless auth: a signed JWT in an httpOnly cookie. No server-side session
+// store (replaces express-session + connect-pg-simple) so the app is a clean
+// fit for stateless serverless functions on Vercel.
 
-declare module "express-session" {
-  interface SessionData {
-    userId?: string;
+declare global {
+  // eslint-disable-next-line @typescript-eslint/no-namespace
+  namespace Express {
+    interface Request {
+      userId?: string;
+    }
   }
+}
+
+const AUTH_COOKIE = "auth_token";
+const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+
+function getSecretKey(): Uint8Array {
+  const secret = process.env.SESSION_SECRET;
+  if (!secret) {
+    throw new Error(
+      "SESSION_SECRET must be set. Refusing to start without a JWT signing secret.",
+    );
+  }
+  return new TextEncoder().encode(secret);
 }
 
 const registerSchema = z.object({
@@ -27,47 +44,81 @@ const loginSchema = z.object({
   password: z.string().min(1, "Password is required"),
 });
 
-export function setupAuth(app: Express): void {
-  const sessionSecret = process.env.SESSION_SECRET;
-  if (!sessionSecret) {
-    throw new Error(
-      "SESSION_SECRET must be set. Refusing to start with an insecure hardcoded fallback.",
-    );
-  }
-
-  const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-  });
-
-  app.use(
-    session({
-      store: new PgStore({
-        pool,
-        tableName: "sessions",
-        createTableIfMissing: true,
-      }),
-      secret: sessionSecret,
-      resave: false,
-      saveUninitialized: false,
-      cookie: {
-        secure: process.env.NODE_ENV === "production",
-        httpOnly: true,
-        maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
-      },
-    })
-  );
+async function signToken(userId: string): Promise<string> {
+  return await new SignJWT({ userId })
+    .setProtectedHeader({ alg: "HS256" })
+    .setIssuedAt()
+    .setExpirationTime("30d")
+    .sign(getSecretKey());
 }
 
-export function isAuthenticated(req: Request, res: Response, next: NextFunction): void {
-  if (req.session.userId) {
-    next();
-  } else {
-    res.status(401).json({ message: "Unauthorized" });
+function cookieOptions() {
+  return {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax" as const,
+    path: "/",
+  };
+}
+
+function setAuthCookie(res: Response, token: string): void {
+  res.cookie(AUTH_COOKIE, token, { ...cookieOptions(), maxAge: THIRTY_DAYS_MS });
+}
+
+function clearAuthCookie(res: Response): void {
+  // clearCookie must be given the same options (minus maxAge) it was set with.
+  res.clearCookie(AUTH_COOKIE, cookieOptions());
+}
+
+/**
+ * Verify the auth cookie and return the userId, or null. Never throws.
+ * Exported because it is needed outside the isAuthenticated middleware:
+ * GET /api/auth/user is not behind the middleware, and the Vercel Blob
+ * upload-token route must authenticate without relying on req.userId.
+ */
+export async function readUserId(req: Request): Promise<string | null> {
+  const token = req.cookies?.[AUTH_COOKIE];
+  if (!token || typeof token !== "string") return null;
+  try {
+    const { payload } = await jwtVerify(token, getSecretKey());
+    return typeof payload.userId === "string" ? payload.userId : null;
+  } catch {
+    return null;
+  }
+}
+
+export function setupAuth(app: Express): void {
+  // Fail fast if the signing secret is missing.
+  getSecretKey();
+  // Trust Vercel's TLS-terminating proxy so req.secure (and thus the "secure"
+  // cookie flag decision) and req.ip reflect the real client connection.
+  app.set("trust proxy", 1);
+  app.use(cookieParser());
+}
+
+export async function isAuthenticated(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  // Express 4 does not await async middleware, so any rejection would become an
+  // unhandledRejection with no response. readUserId never throws today, but the
+  // try/catch keeps this robust against future changes.
+  try {
+    const userId = await readUserId(req);
+    if (userId) {
+      req.userId = userId;
+      next();
+    } else {
+      res.status(401).json({ message: "Unauthorized" });
+    }
+  } catch (err) {
+    next(err);
   }
 }
 
 export function getUserId(req: Request): string {
-  return req.session.userId || "";
+  return req.userId || "";
 }
 
 export function registerAuthRoutes(app: Express): void {
@@ -75,8 +126,8 @@ export function registerAuthRoutes(app: Express): void {
     try {
       const parseResult = registerSchema.safeParse(req.body);
       if (!parseResult.success) {
-        return res.status(400).json({ 
-          error: parseResult.error.errors[0]?.message || "Invalid request" 
+        return res.status(400).json({
+          error: parseResult.error.errors[0]?.message || "Invalid request",
         });
       }
 
@@ -97,7 +148,8 @@ export function registerAuthRoutes(app: Express): void {
         description: "Welcome bonus for joining Inspectly!",
       });
 
-      req.session.userId = user.id;
+      const token = await signToken(user.id);
+      setAuthCookie(res, token);
 
       res.json({
         user: {
@@ -118,8 +170,8 @@ export function registerAuthRoutes(app: Express): void {
     try {
       const parseResult = loginSchema.safeParse(req.body);
       if (!parseResult.success) {
-        return res.status(400).json({ 
-          error: parseResult.error.errors[0]?.message || "Invalid request" 
+        return res.status(400).json({
+          error: parseResult.error.errors[0]?.message || "Invalid request",
         });
       }
 
@@ -135,7 +187,8 @@ export function registerAuthRoutes(app: Express): void {
         return res.status(401).json({ error: "Invalid email or password" });
       }
 
-      req.session.userId = user.id;
+      const token = await signToken(user.id);
+      setAuthCookie(res, token);
 
       res.json({
         user: {
@@ -152,25 +205,21 @@ export function registerAuthRoutes(app: Express): void {
     }
   });
 
-  app.post("/api/auth/logout", (req: Request, res: Response) => {
-    req.session.destroy((err) => {
-      if (err) {
-        return res.status(500).json({ error: "Logout failed" });
-      }
-      res.clearCookie("connect.sid");
-      res.json({ message: "Logged out successfully" });
-    });
+  app.post("/api/auth/logout", (_req: Request, res: Response) => {
+    clearAuthCookie(res);
+    res.json({ message: "Logged out successfully" });
   });
 
   app.get("/api/auth/user", async (req: Request, res: Response) => {
-    if (!req.session.userId) {
+    const userId = await readUserId(req);
+    if (!userId) {
       return res.status(401).json({ message: "Unauthorized" });
     }
 
     try {
-      const user = await storage.getUserById(req.session.userId);
+      const user = await storage.getUserById(userId);
       if (!user) {
-        req.session.destroy(() => {});
+        clearAuthCookie(res);
         return res.status(401).json({ message: "User not found" });
       }
 

@@ -22,6 +22,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { AIAnalysis } from "@/lib/battlecard";
 import { generateBattlecardText, downloadBattlecardPDF } from "@/lib/battlecard";
 import { BattlecardView } from "@/components/battlecard-view";
+import { upload as uploadToBlob } from "@vercel/blob/client";
 import type { Report, CreditTransaction } from "@shared/schema";
 
 // Deal status types and configuration
@@ -180,27 +181,45 @@ export default function DashboardPage() {
 
   const uploadMutation = useMutation({
     mutationFn: async (file: File) => {
-      const formData = new FormData();
-      formData.append('file', file);
-      
       setUploadProgress(20);
-      const response = await fetch('/api/reports/upload', {
-        method: 'POST',
-        body: formData,
-        credentials: 'include',
+
+      // Upload the PDF straight to Vercel Blob from the browser. This bypasses
+      // the serverless function's 4.5MB request-body limit — the file never
+      // travels through our API. The upload-token route authorizes it.
+      const blob = await uploadToBlob(file.name, file, {
+        access: 'private',
+        handleUploadUrl: '/api/blob/upload-token',
+        onUploadProgress: (progress) => {
+          // Map the browser->Blob transfer (the slow phase for large PDFs)
+          // onto the 20-60% band so the bar doesn't freeze at 20%.
+          setUploadProgress(20 + Math.round(progress.percentage * 0.4));
+        },
       });
-      
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Upload failed');
-      }
-      
+
       setUploadProgress(60);
       setIsAnalyzing(true);
-      
+
+      // Hand the blob URL to the server, which fetches it, parses, runs the AI
+      // analysis, and persists the report.
+      const response = await fetch('/api/reports/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          blobUrl: blob.url,
+          fileName: file.name,
+          fileSize: file.size,
+        }),
+        credentials: 'include',
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Upload failed');
+      }
+
       const result = await response.json();
       setUploadProgress(100);
-      
+
       return result;
     },
     onSuccess: async (data: UploadResult) => {

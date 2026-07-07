@@ -1,26 +1,18 @@
 import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
-import multer from "multer";
 import crypto from "crypto";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import OpenAI from "openai";
 import { PDFParse } from "pdf-parse";
+import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
+import { get, del } from "@vercel/blob";
 import { storage } from "./storage";
-import { setupAuth, isAuthenticated, registerAuthRoutes, getUserId } from "./auth";
+import { setupAuth, isAuthenticated, registerAuthRoutes, getUserId, readUserId } from "./auth";
 import { CREDIT_VALUES, insertPropertySchema, insertPropertyReportSchema } from "@shared/schema";
 import { z } from "zod";
 
-// Configure multer for file uploads
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit
-  fileFilter: (req, file, cb) => {
-    if (file.mimetype === 'application/pdf') {
-      cb(null, true);
-    } else {
-      cb(new Error('Only PDF files are allowed'));
-    }
-  },
-});
+const MAX_PDF_BYTES = 50 * 1024 * 1024; // 50MB
 
 // OpenAI client for AI analysis.
 // Prefer a direct OpenAI key (post-Replit); fall back to the Replit AI proxy
@@ -450,56 +442,107 @@ export async function registerRoutes(
   });
 
   // Upload report
-  app.post("/api/reports/upload", isAuthenticated, upload.single('file'), async (req: Request, res: Response) => {
+  // Mint a client-upload token for a browser -> Vercel Blob direct upload.
+  // NOT behind isAuthenticated: Vercel's Blob upload-completed webhook re-hits
+  // this same URL with no auth cookie, so gating it would 401 -> retry x5.
+  // Authentication happens inside onBeforeGenerateToken via readUserId.
+  app.post("/api/blob/upload-token", async (req: Request, res: Response) => {
+    try {
+      const jsonResponse = await handleUpload({
+        body: req.body as HandleUploadBody,
+        request: req,
+        onBeforeGenerateToken: async () => {
+          const userId = await readUserId(req);
+          if (!userId) {
+            throw new Error("Not authenticated");
+          }
+          return {
+            allowedContentTypes: ["application/pdf"],
+            maximumSizeInBytes: MAX_PDF_BYTES,
+            addRandomSuffix: true,
+            tokenPayload: JSON.stringify({ userId }),
+          };
+        },
+        // Required by the type. The real ingestion happens in the follow-up
+        // POST /api/reports/upload; this callback does not fire on localhost
+        // and retries on any non-2xx, so keep it a no-op.
+        onUploadCompleted: async () => {},
+      });
+      res.json(jsonResponse);
+    } catch (error) {
+      console.error("Blob upload-token error:", error);
+      res.status(400).json({ error: (error as Error).message });
+    }
+  });
+
+  // Ingest a PDF the client has already streamed directly to Vercel Blob.
+  // The client sends only the resulting URL, so the PDF never traverses this
+  // request (bypassing Vercel's 4.5MB function body limit); we fetch it back
+  // server-side, parse, analyze, and persist the blob URL for later download.
+  app.post("/api/reports/upload", isAuthenticated, async (req: Request, res: Response) => {
+    const blobUrl: string | undefined = req.body?.blobUrl;
+    const fileName: string = (req.body?.fileName as string) || "report.pdf";
+    const fileSize: number = Number(req.body?.fileSize) || 0;
+
+    if (!blobUrl || typeof blobUrl !== "string") {
+      return res.status(400).json({ error: "Missing blobUrl" });
+    }
+
+    // Track whether the report row was committed. Once it is, the persisted
+    // report OWNS the blob, so a later failure must NOT delete it.
+    let reportPersisted = false;
+
     try {
       const userId = getUserId(req);
-      const file = req.file;
 
-      if (!file) {
-        return res.status(400).json({ error: "No file uploaded" });
+      // Fetch the PDF bytes back from the (private) Blob store.
+      const blob = await get(blobUrl, { access: "private" });
+      if (!blob || !blob.stream) {
+        return res.status(400).json({ error: "Uploaded file not found in storage" });
       }
+      const buffer = Buffer.from(await new Response(blob.stream).arrayBuffer());
 
-      // Generate file hash to prevent duplicates
-      const fileHash = crypto.createHash('sha256').update(file.buffer).digest('hex');
-
-      // Check for duplicate
+      // Global dedup by content hash.
+      const fileHash = crypto.createHash("sha256").update(buffer).digest("hex");
       const existing = await storage.getReportByHash(fileHash);
       if (existing) {
+        await del(blobUrl); // don't orphan the just-uploaded duplicate
         return res.status(400).json({ error: "This report has already been uploaded" });
       }
 
-      // Extract text from PDF
-      let pdfText = '';
+      // Extract text from the PDF.
+      let pdfText = "";
       try {
-        const parser = new PDFParse({ data: new Uint8Array(file.buffer) });
+        const parser = new PDFParse({ data: new Uint8Array(buffer) });
         const textResult = await parser.getText();
-        pdfText = textResult.text || '';
+        pdfText = textResult.text || "";
         await parser.destroy();
       } catch (pdfError) {
         console.error("PDF parse error:", pdfError);
-        pdfText = `[PDF text extraction failed for file: ${file.originalname}]`;
+        pdfText = `[PDF text extraction failed for file: ${fileName}]`;
       }
 
-      // Run AI analysis with actual PDF content
-      const analysis = await analyzeReport(file.originalname, pdfText);
+      // Run AI analysis with actual PDF content.
+      const analysis = await analyzeReport(fileName, pdfText);
 
       // Resolve the property address from the DOCUMENT, not the filename.
       // Priority: AI-extracted (reads full report) -> labeled-text regex
       // (survives AI failure) -> cleaned filename -> placeholder.
-      const filenameAddress = file.originalname.replace(/\.pdf$/i, '').replace(/_/g, ' ').trim();
+      const filenameAddress = fileName.replace(/\.pdf$/i, "").replace(/_/g, " ").trim();
       const propertyAddress =
         (analysis.propertyAddress && analysis.propertyAddress.trim()) ||
         extractAddressFromText(pdfText) ||
         filenameAddress ||
         "Unknown Address";
 
-      // Create the report (persist full analysis for View / My Reports battlecard)
+      // Create the report (persist full analysis + the stored PDF URL).
       const report = await storage.createReport({
         userId,
         propertyAddress,
         fileHash,
-        fileName: file.originalname,
-        fileSize: file.size,
+        fileName,
+        fileSize: fileSize || buffer.length,
+        fileUrl: blobUrl,
         majorDefects: analysis.majorDefects,
         summaryFindings: analysis.summaryFindings,
         negotiationPoints: analysis.negotiationPoints,
@@ -508,27 +551,25 @@ export async function registerRoutes(
         isRedacted: true,
         isPublic: true,
       });
+      reportPersisted = true; // from here the report owns the blob
 
-      // Award credits for upload
+      // Award credits for upload.
       await storage.createCreditTransaction({
         userId,
         amount: CREDIT_VALUES.UPLOAD_REWARD,
-        type: 'upload',
+        type: "upload",
         description: `Uploaded report: ${report.propertyAddress}`,
         reportId: report.id,
       });
 
-      // Check if this fulfills any bounties
+      // Auto-fulfill any matching bounty.
       const matchingBounty = await storage.getBountyByAddress(report.propertyAddress);
       if (matchingBounty && matchingBounty.userId !== userId) {
-        // Fulfill the bounty
         await storage.fulfillBounty(matchingBounty.id, userId, report.id);
-        
-        // Transfer bounty credits to uploader
         await storage.createCreditTransaction({
           userId,
           amount: matchingBounty.stakedCredits,
-          type: 'bounty_earned',
+          type: "bounty_earned",
           description: `Bounty fulfilled for: ${report.propertyAddress}`,
           bountyId: matchingBounty.id,
           reportId: report.id,
@@ -542,6 +583,22 @@ export async function registerRoutes(
       });
     } catch (error) {
       console.error("Upload error:", error);
+      // Only clean up the blob if NO report was persisted — otherwise we would
+      // delete the PDF a committed report still references (dangling fileUrl).
+      if (!reportPersisted) {
+        try {
+          await del(blobUrl);
+        } catch {
+          /* ignore cleanup failure */
+        }
+      }
+      // A unique-violation on file_hash means a concurrent request won the
+      // dedup race; surface the friendly 400 rather than a generic 500.
+      const code = (error as { code?: string } | null)?.code;
+      const message = (error as Error)?.message ?? "";
+      if (code === "23505" || /duplicate key|unique constraint/i.test(message)) {
+        return res.status(400).json({ error: "This report has already been uploaded" });
+      }
       res.status(500).json({ error: "Failed to upload report" });
     }
   });
@@ -669,6 +726,54 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Get report analysis error:", error);
       res.status(500).json({ error: "Failed to get analysis" });
+    }
+  });
+
+  // Serve the stored PDF — only for the report owner or users who have downloaded it.
+  app.get("/api/reports/:id/file", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const userId = getUserId(req);
+      const reportId = parseInt(req.params.id);
+      const report = await storage.getReport(reportId);
+      if (!report) {
+        return res.status(404).json({ error: "Report not found" });
+      }
+      const owns = report.userId === userId;
+      const hasDownloaded = await storage.hasUserDownloaded(userId, reportId);
+      if (!owns && !hasDownloaded) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      if (!report.fileUrl) {
+        return res.status(404).json({ error: "No file stored for this report" });
+      }
+      const blob = await get(report.fileUrl, { access: "private" });
+      if (!blob || !blob.stream) {
+        return res.status(404).json({ error: "File not found in storage" });
+      }
+      res.setHeader("Content-Type", blob.blob.contentType || "application/pdf");
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${report.fileName.replace(/"/g, "")}"`,
+      );
+      // pipeline() forwards stream errors and destroys both ends on failure /
+      // client disconnect — a bare .pipe() would emit an uncatchable 'error'
+      // and could crash the function.
+      try {
+        await pipeline(Readable.fromWeb(blob.stream as any), res);
+      } catch (streamErr) {
+        console.error("File stream error:", streamErr);
+        if (!res.headersSent) {
+          res.status(500).json({ error: "Failed to stream file" });
+        } else {
+          res.destroy();
+        }
+      }
+    } catch (error) {
+      console.error("Serve report file error:", error);
+      if (!res.headersSent) {
+        res.status(500).json({ error: "Failed to serve file" });
+      }
     }
   });
 

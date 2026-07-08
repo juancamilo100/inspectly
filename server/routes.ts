@@ -4,7 +4,6 @@ import crypto from "crypto";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import OpenAI from "openai";
-import { extractText, getDocumentProxy } from "unpdf";
 import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
 import { get, del } from "@vercel/blob";
 import { storage } from "./storage";
@@ -213,52 +212,41 @@ Field rules:
 - marketLeverageNotes: How to weaponize days on market, price-reduction history, comps, season, and market direction for THIS negotiation; if the report gives no market clues, list the exact data the buyer should pull before the call (DOM, list-price history, pending comps, seller's purchase date and price).
 }`;
 
-// Best-effort extraction of the subject-property address from raw report text.
-// Fallback for when the AI does not return one (e.g. the AI call itself failed).
-// Targets labeled lines common to inspection reports rather than a loose street
-// regex, so it does not accidentally grab the inspector's own office address.
-function extractAddressFromText(pdfText: string): string {
-  if (!pdfText) return '';
-  const labels = [
-    'property address', 'subject property', 'inspection address',
-    'property inspected', 'address of property', 'site address', 'inspected property',
-  ];
-  const lines = pdfText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-  for (let i = 0; i < lines.length; i++) {
-    const lower = lines[i].toLowerCase();
-    for (const label of labels) {
-      const idx = lower.indexOf(label);
-      if (idx === -1) continue;
-      // Address may follow the label on the same line, or sit on the next line.
-      let candidate = lines[i].slice(idx + label.length).replace(/^[:\-\s]+/, '').trim();
-      if (candidate.length < 6 && i + 1 < lines.length) candidate = lines[i + 1].trim();
-      // Sanity check: plausible length and contains a digit (street number or ZIP).
-      if (candidate.length >= 6 && candidate.length <= 120 && /\d/.test(candidate)) {
-        return candidate;
-      }
-    }
-  }
-  return '';
-}
-
-async function analyzeReport(fileName: string, pdfText: string): Promise<AnalysisResult> {
+async function analyzeReport(fileName: string, pdfBuffer: Buffer): Promise<AnalysisResult> {
   try {
-    const truncatedText = pdfText.slice(0, 80000);
-    const response = await openai.chat.completions.create({
+    // Native PDF input at high detail: hand the model the actual PDF so it reads
+    // the photos, diagrams, and tables — not just extracted text. Requires the
+    // Responses API; Chat Completions cannot set page-image `detail`.
+    const base64Pdf = pdfBuffer.toString("base64");
+    const response = await openai.responses.create({
       model: "gpt-4o",
-      messages: [
-        { role: "system", content: BATTLECARD_SYSTEM_PROMPT },
+      instructions: BATTLECARD_SYSTEM_PROMPT,
+      input: [
         {
           role: "user",
-          content: `Analyze this property inspection report and generate the complete negotiation battlecard. Detect whether it is a single-family or multifamily/commercial report and adapt (per-door math if multifamily). Quote the inspector's exact language in scripts where impactful. Anchor high, keep every number internally consistent, and output valid JSON only.\n\nFilename: ${fileName}\n\n--- INSPECTION REPORT CONTENT ---\n${truncatedText}`,
+          content: [
+            {
+              type: "input_text",
+              text: `Analyze the attached property inspection report PDF and generate the complete negotiation battlecard. READ THE PHOTOS, diagrams, and tables — not just the text — and cite specific visual evidence where impactful. Detect whether it is a single-family or multifamily/commercial report and adapt (per-door math if multifamily). Quote the inspector's exact language in scripts where impactful. Anchor high, keep every number internally consistent, and output valid JSON only.\n\nFilename: ${fileName}`,
+            },
+            // The OpenAI API accepts `detail` on input_file to control PDF
+            // page-image resolution, but the SDK 6.15 ResponseInputFile type
+            // omits it — cast to pass high detail.
+            {
+              type: "input_file",
+              filename: fileName,
+              file_data: `data:application/pdf;base64,${base64Pdf}`,
+              detail: "high",
+            } as any,
+          ],
         },
       ],
-      response_format: { type: "json_object" },
-      max_completion_tokens: 16000,
+      text: { format: { type: "json_object" } },
+      max_output_tokens: 16000,
       temperature: 0.7,
     });
 
-    const content = response.choices[0]?.message?.content || '{}';
+    const content = response.output_text || "{}";
     const parsed = JSON.parse(content);
 
     const rawDefects = parsed.majorDefects || [];
@@ -510,28 +498,15 @@ export async function registerRoutes(
         return res.status(400).json({ error: "This report has already been uploaded" });
       }
 
-      // Extract text from the PDF. unpdf ships a serverless build of PDF.js
-      // (no canvas/DOMMatrix), unlike pdf-parse which crashes on Vercel.
-      let pdfText = "";
-      try {
-        const pdf = await getDocumentProxy(new Uint8Array(buffer));
-        const { text } = await extractText(pdf, { mergePages: true });
-        pdfText = text || "";
-      } catch (pdfError) {
-        console.error("PDF parse error:", pdfError);
-        pdfText = `[PDF text extraction failed for file: ${fileName}]`;
-      }
+      // Run AI analysis by sending the PDF itself to GPT-4o (native PDF input,
+      // high detail) so the model reads the photos/diagrams, not just text.
+      const analysis = await analyzeReport(fileName, buffer);
 
-      // Run AI analysis with actual PDF content.
-      const analysis = await analyzeReport(fileName, pdfText);
-
-      // Resolve the property address from the DOCUMENT, not the filename.
-      // Priority: AI-extracted (reads full report) -> labeled-text regex
-      // (survives AI failure) -> cleaned filename -> placeholder.
+      // Resolve the property address: AI-extracted (read from the PDF) ->
+      // cleaned filename -> placeholder.
       const filenameAddress = fileName.replace(/\.pdf$/i, "").replace(/_/g, " ").trim();
       const propertyAddress =
         (analysis.propertyAddress && analysis.propertyAddress.trim()) ||
-        extractAddressFromText(pdfText) ||
         filenameAddress ||
         "Unknown Address";
 

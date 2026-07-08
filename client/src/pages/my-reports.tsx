@@ -165,6 +165,31 @@ export default function MyReportsPage() {
       .finally(() => setAnalysisLoading(false));
   }, [selectedReport?.id, isAnalysisOpen]);
 
+  const downloadOriginalPdf = async (report: Report) => {
+    try {
+      const res = await fetch(`/api/reports/${report.id}/file`, { credentials: "include" });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || "Download failed");
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = report.fileName || "inspection.pdf";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      toast({
+        title: "Couldn't download PDF",
+        description: e instanceof Error ? e.message : "Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
+
   const ReportCard = ({ report, showActions = false }: { report: Report; showActions?: boolean }) => (
     <Card className="hover-elevate transition-all" data-testid={`card-my-report-${report.id}`}>
       <CardContent className="p-4 space-y-3">
@@ -241,6 +266,17 @@ export default function MyReportsPage() {
           >
             <Eye className="w-4 h-4" />
           </Button>
+          {report.fileUrl && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => downloadOriginalPdf(report)}
+              data-testid={`button-download-pdf-${report.id}`}
+              title="Download inspection PDF"
+            >
+              <FileText className="w-4 h-4" />
+            </Button>
+          )}
         </div>
       </CardContent>
     </Card>

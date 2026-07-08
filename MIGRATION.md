@@ -1,6 +1,12 @@
 # Inspectly: Migration off Replit → Vercel + Neon
 
-> Status: **in progress — Phase 1 + Phase 2 code complete; manual-cloud steps remain.** Read the Executive Summary, the "Pivotal decision" section, and §10 (cloud runbook) first.
+> Status: **✅ DEPLOYED to production and verified** (2026-07-08). Live at https://inspectly-navy.vercel.app on the `juanespinosa100-3719s-projects` Vercel account + a dedicated Neon database + a private Vercel Blob store. Verified end-to-end via CLI: SPA serves, migrations applied, register issues a JWT cookie, and an authenticated `/api/dashboard` call returns the credit ledger. Only the browser upload→AI→download path remains to be exercised manually in the UI.
+>
+> **Two runtime gotchas found on first deploy (both fixed):**
+> - `pdf-parse` v2 crashed the whole function at module load on Vercel (`DOMMatrix is not defined` — it pulls in PDF.js's canvas path). Replaced with `unpdf` (serverless PDF.js, no canvas/DOM).
+> - `@neondatabase/serverless` 1.x broke `drizzle-orm@0.39.3`'s query calls (`"must be called as a tagged-template"`). Pinned to `0.10.4` (drizzle's tested peer range).
+>
+> Original planning status below.
 >
 > **Decisions locked (2026-07-07):**
 > 1. Architecture → **Option A: all-in on Vercel** (Express-as-single-function + Vercel Blob uploads + Neon).

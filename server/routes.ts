@@ -5,6 +5,7 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import OpenAI from "openai";
 import { extractText, getDocumentProxy } from "unpdf";
+import { buildEnrichedReportText } from "./enrichment";
 import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
 import { get, del } from "@vercel/blob";
 import { storage } from "./storage";
@@ -143,6 +144,8 @@ The seller must FEEL they won even while paying. Weapons:
 
 Think step-by-step: inventory every finding in the report; assign each to a kill vector where applicable; price it; choose the right deal structure; then write scripts the buyer can read aloud VERBATIM. Every script must name the specific defect and its dollar figure, quote the inspector's exact language where impactful, and contain zero placeholders or filler. If the report text is thin or extraction failed, do NOT invent defects — work with what exists, and turn the gaps themselves into leverage by listing the additional inspections to demand (sewer scope, WDO, radon, 4-point, foundation engineer).
 
+If the report content includes [PHOTO OBSERVATIONS] blocks, those are findings detected in the report's photographs — sometimes issues the inspector did not write up. Treat them as legitimate leverage, but any defect supported ONLY by a photo observation must include "(photo-observed — verify with contractor)" in its issue text, be priced with a conservative range pending verification, and never be presented as an inspector-documented finding.
+
 Required JSON structure:
 
 {
@@ -219,6 +222,13 @@ Field rules:
 // a large report); at low tiers OpenAI rejects it (429 "request too large"), so
 // we fall back to text. Off by default → text path, which works at any tier.
 const USE_NATIVE_PDF = process.env.USE_NATIVE_PDF === "true";
+
+// Set USE_IMAGE_ENRICHMENT=true for the two-stage pipeline: extract the
+// report's photos, describe them with gpt-4o-mini (separate rate pool, low
+// detail), and weave the observations into the text before the gpt-4o
+// battlecard call. Vision context at Tier-1 rate limits. Falls back to plain
+// text on any failure.
+const USE_IMAGE_ENRICHMENT = process.env.USE_IMAGE_ENRICHMENT === "true";
 
 const NATIVE_PDF_USER_PROMPT = (fileName: string) =>
   `Analyze the attached property inspection report PDF and generate the complete negotiation battlecard. READ THE PHOTOS, diagrams, and tables — not just the text — and cite specific visual evidence where impactful. Detect whether it is a single-family or multifamily/commercial report and adapt (per-door math if multifamily). Quote the inspector's exact language in scripts where impactful. Anchor high, keep every number internally consistent, and output valid JSON only.\n\nFilename: ${fileName}`;
@@ -433,23 +443,41 @@ const FALLBACK_ANALYSIS: AnalysisResult = {
 };
 
 async function analyzeReport(fileName: string, pdfBuffer: Buffer): Promise<AnalysisResult> {
-  // Vision-first when enabled and the tier allows; otherwise — and on any native
-  // failure (e.g. 429 request-too-large at low tiers) — fall back to text
-  // extraction, which fits low OpenAI rate limits.
+  // Preference order, each falling through on failure:
+  //   1. Native PDF vision (needs a higher OpenAI tier)
+  //   2. Image-enriched text (photos described on gpt-4o-mini's separate pool)
+  //   3. Plain extracted text (works at any tier)
+  //   4. Hardcoded fallback battlecard (only if the model call itself fails)
   if (USE_NATIVE_PDF) {
     try {
       return normalizeAnalysis(await requestNativePdfAnalysis(fileName, pdfBuffer));
     } catch (err) {
       console.error(
-        "Native PDF analysis failed; falling back to text extraction:",
+        "Native PDF analysis failed; falling back:",
         (err as { status?: number })?.status,
         (err as Error)?.message,
       );
     }
   }
   try {
-    const pdfText = await extractPdfText(pdfBuffer, fileName);
-    return normalizeAnalysis(await requestTextAnalysis(fileName, pdfText));
+    let reportText: string | null = null;
+    if (USE_IMAGE_ENRICHMENT) {
+      try {
+        const { enrichedText, stats } = await buildEnrichedReportText(openai, pdfBuffer, fileName);
+        reportText = enrichedText;
+        console.log(
+          `Image enrichment: ${stats.photosDescribed}/${stats.photosFound} photos described, ` +
+            `${stats.observations} observations, ${stats.batches} batches (${stats.retries} retries), ` +
+            `${stats.promptTokens}+${stats.completionTokens} mini tokens, ${Math.round(stats.ms / 1000)}s`,
+        );
+      } catch (err) {
+        console.error("Image enrichment failed; using plain text:", (err as Error)?.message);
+      }
+    }
+    if (!reportText) {
+      reportText = await extractPdfText(pdfBuffer, fileName);
+    }
+    return normalizeAnalysis(await requestTextAnalysis(fileName, reportText));
   } catch (err) {
     console.error("AI analysis error:", err);
     return FALLBACK_ANALYSIS;

@@ -258,14 +258,22 @@ async function requestNativePdfAnalysis(fileName: string, pdfBuffer: Buffer): Pr
 
 // Text-extraction analysis via Chat Completions. Returns raw parsed JSON; throws on error.
 async function requestTextAnalysis(fileName: string, pdfText: string): Promise<Record<string, unknown>> {
+  // OpenAI's rate limiter weighs a request as input tokens + max output tokens.
+  // At low tiers (gpt-4o: 30k TPM) a large report + a flat 16k output cap
+  // exceeds the per-minute budget and 429s ("request too large") before the
+  // model ever runs. Size the output budget to what the input leaves room for:
+  // floor 6k (a full battlecard is typically 5-8k), ceiling 16k, total <= ~28.5k.
+  const truncatedText = pdfText.slice(0, 70000);
+  const estInputTokens = Math.ceil(truncatedText.length / 4) + 3800; // report text + prompts
+  const maxOutput = Math.max(6000, Math.min(16000, 28500 - estInputTokens));
   const response = await openai.chat.completions.create({
     model: "gpt-4o",
     messages: [
       { role: "system", content: BATTLECARD_SYSTEM_PROMPT },
-      { role: "user", content: TEXT_USER_PROMPT(fileName, pdfText.slice(0, 80000)) },
+      { role: "user", content: TEXT_USER_PROMPT(fileName, truncatedText) },
     ],
     response_format: { type: "json_object" },
-    max_completion_tokens: 16000,
+    max_completion_tokens: maxOutput,
     temperature: 0.7,
   });
   return JSON.parse(response.choices[0]?.message?.content || "{}");

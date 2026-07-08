@@ -166,7 +166,9 @@ Balance = COALESCE(SUM(amount), 0). War Chest = Math.floor(balance / 5).
 - Text truncated to 80,000 chars
 
 ### OpenAI Call
-- Model: gpt-4o, response_format: json_object, max_completion_tokens: 16000, temperature: 0.7
+- Analysis preference chain (each falls through on failure): native PDF vision (USE_NATIVE_PDF, needs Tier 2+) -> image-enriched text (USE_IMAGE_ENRICHMENT, ON in prod) -> plain text -> static fallback.
+- Image enrichment (server/enrichment.ts): extract embedded photos (unpdf), filter/dedupe, prioritize defect-flagged pages, cap 150, encode <=512px JPEGs (sharp, dynamic import); describe in batches of 12 on gpt-4o-mini LOW detail (separate 200k TPM pool; retry-on-429; 165s deadline guard); weave [PHOTO OBSERVATIONS - page N] blocks into page text. Verified in prod: 92-page report -> 150 photos, 101 observations, ~83s, ~$0.07 vision cost.
+- Final call: gpt-4o, response_format: json_object, adaptive max_completion_tokens (floor 6k, ceiling 16k, input+output <= ~28.5k to fit 30k TPM), temperature: 0.7. Photo-only findings labeled "(photo-observed - verify with contractor)".
 - System prompt: BATTLECARD_SYSTEM_PROMPT — elite-investor persona plus a research-backed doctrine: three "kill vectors" (insurability: FPE/Zinsco/Challenger/Pushmatic panels, roof age, 4-point inspection items; financeability: FHA/VA minimum property requirements as hard closing blockers; disclosure: findings legally attach to the property in most states), credit-vs-price-cut arbitrage with lender credit caps, seller-funded rate buydowns, 1.5x escrow holdbacks, Voss/Ackerman negotiation mechanics, scripted answers to seller counterpunches, multifamily per-door/NOI mode, and an explicit legal line (disclosure stated as fact never threat; no report-to-authorities scripts). JSON schema unchanged from v1.
 
 ### AnalysisResult Type (analysis_json)

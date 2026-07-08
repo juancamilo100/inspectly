@@ -4,7 +4,7 @@ import crypto from "crypto";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import OpenAI from "openai";
-import { PDFParse } from "pdf-parse";
+import { extractText, getDocumentProxy } from "unpdf";
 import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
 import { get, del } from "@vercel/blob";
 import { storage } from "./storage";
@@ -510,13 +510,13 @@ export async function registerRoutes(
         return res.status(400).json({ error: "This report has already been uploaded" });
       }
 
-      // Extract text from the PDF.
+      // Extract text from the PDF. unpdf ships a serverless build of PDF.js
+      // (no canvas/DOMMatrix), unlike pdf-parse which crashes on Vercel.
       let pdfText = "";
       try {
-        const parser = new PDFParse({ data: new Uint8Array(buffer) });
-        const textResult = await parser.getText();
-        pdfText = textResult.text || "";
-        await parser.destroy();
+        const pdf = await getDocumentProxy(new Uint8Array(buffer));
+        const { text } = await extractText(pdf, { mergePages: true });
+        pdfText = text || "";
       } catch (pdfError) {
         console.error("PDF parse error:", pdfError);
         pdfText = `[PDF text extraction failed for file: ${fileName}]`;

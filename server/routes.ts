@@ -4,6 +4,7 @@ import crypto from "crypto";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import OpenAI from "openai";
+import { extractText, getDocumentProxy } from "unpdf";
 import { handleUpload, type HandleUploadBody } from "@vercel/blob/client";
 import { get, del } from "@vercel/blob";
 import { storage } from "./storage";
@@ -212,42 +213,78 @@ Field rules:
 - marketLeverageNotes: How to weaponize days on market, price-reduction history, comps, season, and market direction for THIS negotiation; if the report gives no market clues, list the exact data the buyer should pull before the call (DOM, list-price history, pending comps, seller's purchase date and price).
 }`;
 
-async function analyzeReport(fileName: string, pdfBuffer: Buffer): Promise<AnalysisResult> {
-  try {
-    // Native PDF input at high detail: hand the model the actual PDF so it reads
-    // the photos, diagrams, and tables — not just extracted text. Requires the
-    // Responses API; Chat Completions cannot set page-image `detail`.
-    const base64Pdf = pdfBuffer.toString("base64");
-    const response = await openai.responses.create({
-      model: "gpt-4o",
-      instructions: BATTLECARD_SYSTEM_PROMPT,
-      input: [
-        {
-          role: "user",
-          content: [
-            {
-              type: "input_text",
-              text: `Analyze the attached property inspection report PDF and generate the complete negotiation battlecard. READ THE PHOTOS, diagrams, and tables — not just the text — and cite specific visual evidence where impactful. Detect whether it is a single-family or multifamily/commercial report and adapt (per-door math if multifamily). Quote the inspector's exact language in scripts where impactful. Anchor high, keep every number internally consistent, and output valid JSON only.\n\nFilename: ${fileName}`,
-            },
-            // The OpenAI API accepts `detail` on input_file to control PDF
-            // page-image resolution, but the SDK 6.15 ResponseInputFile type
-            // omits it — cast to pass high detail.
-            {
-              type: "input_file",
-              filename: fileName,
-              file_data: `data:application/pdf;base64,${base64Pdf}`,
-              detail: "high",
-            } as any,
-          ],
-        },
-      ],
-      text: { format: { type: "json_object" } },
-      max_output_tokens: 16000,
-      temperature: 0.7,
-    });
+// Set USE_NATIVE_PDF=true to send the PDF itself to GPT-4o (vision, high detail)
+// so the model reads the photos/diagrams, not just text. This needs an OpenAI
+// tier whose per-minute token limit fits a whole-report request (~70k tokens for
+// a large report); at low tiers OpenAI rejects it (429 "request too large"), so
+// we fall back to text. Off by default → text path, which works at any tier.
+const USE_NATIVE_PDF = process.env.USE_NATIVE_PDF === "true";
 
-    const content = response.output_text || "{}";
-    const parsed = JSON.parse(content);
+const NATIVE_PDF_USER_PROMPT = (fileName: string) =>
+  `Analyze the attached property inspection report PDF and generate the complete negotiation battlecard. READ THE PHOTOS, diagrams, and tables — not just the text — and cite specific visual evidence where impactful. Detect whether it is a single-family or multifamily/commercial report and adapt (per-door math if multifamily). Quote the inspector's exact language in scripts where impactful. Anchor high, keep every number internally consistent, and output valid JSON only.\n\nFilename: ${fileName}`;
+
+const TEXT_USER_PROMPT = (fileName: string, text: string) =>
+  `Analyze this property inspection report and generate the complete negotiation battlecard. Detect whether it is a single-family or multifamily/commercial report and adapt (per-door math if multifamily). Quote the inspector's exact language in scripts where impactful. Anchor high, keep every number internally consistent, and output valid JSON only.\n\nFilename: ${fileName}\n\n--- INSPECTION REPORT CONTENT ---\n${text}`;
+
+// Native PDF input at high detail via the Responses API (Chat Completions can't
+// set page-image detail). Returns the raw parsed battlecard JSON; throws on error.
+async function requestNativePdfAnalysis(fileName: string, pdfBuffer: Buffer): Promise<Record<string, unknown>> {
+  const base64Pdf = pdfBuffer.toString("base64");
+  const response = await openai.responses.create({
+    model: "gpt-4o",
+    instructions: BATTLECARD_SYSTEM_PROMPT,
+    input: [
+      {
+        role: "user",
+        content: [
+          { type: "input_text", text: NATIVE_PDF_USER_PROMPT(fileName) },
+          // The API accepts `detail` on input_file for PDF page-image resolution,
+          // but the SDK 6.15 ResponseInputFile type omits it — cast to pass it.
+          {
+            type: "input_file",
+            filename: fileName,
+            file_data: `data:application/pdf;base64,${base64Pdf}`,
+            detail: "high",
+          } as any,
+        ],
+      },
+    ],
+    text: { format: { type: "json_object" } },
+    max_output_tokens: 16000,
+    temperature: 0.7,
+  });
+  return JSON.parse(response.output_text || "{}");
+}
+
+// Text-extraction analysis via Chat Completions. Returns raw parsed JSON; throws on error.
+async function requestTextAnalysis(fileName: string, pdfText: string): Promise<Record<string, unknown>> {
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o",
+    messages: [
+      { role: "system", content: BATTLECARD_SYSTEM_PROMPT },
+      { role: "user", content: TEXT_USER_PROMPT(fileName, pdfText.slice(0, 80000)) },
+    ],
+    response_format: { type: "json_object" },
+    max_completion_tokens: 16000,
+    temperature: 0.7,
+  });
+  return JSON.parse(response.choices[0]?.message?.content || "{}");
+}
+
+// Serverless-safe PDF text extraction (unpdf). Never throws.
+async function extractPdfText(pdfBuffer: Buffer, fileName: string): Promise<string> {
+  try {
+    const pdf = await getDocumentProxy(new Uint8Array(pdfBuffer));
+    const { text } = await extractText(pdf, { mergePages: true });
+    return text || "";
+  } catch (e) {
+    console.error("PDF text extraction error:", e);
+    return `[PDF text extraction failed for file: ${fileName}]`;
+  }
+}
+
+// Normalize a raw parsed battlecard object into a complete AnalysisResult.
+function normalizeAnalysis(parsed: Record<string, any>): AnalysisResult {
 
     const rawDefects = parsed.majorDefects || [];
     const rawBreakdown = parsed.defectBreakdown || [];
@@ -330,63 +367,84 @@ async function analyzeReport(fileName: string, pdfBuffer: Buffer): Promise<Analy
       disclosureWarning: String(parsed.disclosureWarning ?? ''),
       marketLeverageNotes: String(parsed.marketLeverageNotes ?? 'Use local comps and days on market to reinforce urgency.'),
     };
-  } catch (error) {
-    console.error("AI analysis error:", error);
-    const fallbackBreakdown: DefectBreakdown[] = [
-      {
-        issue: "Roof needs inspection",
-        severity: 'major',
-        estimatedRepairCost: 2500,
-        estimatedRepairRange: { low: 2000, high: 3500 },
-        creditRecommendation: 2000,
-        anchorHighAmount: 2800,
-        consequentialDamageRisk: 'Leaks can lead to interior water damage and mold.',
-        remainingUsefulLife: 'Limited',
-        repairVsCredit: 'request_credit',
-        sellerScript: "The roof shows signs of wear. We're requesting a credit to address this.",
-        collaborativeScript: "We'd like to work with you on the roof. A credit at closing would let us handle it.",
-        nuclearScript: "This will need to be disclosed to future buyers if not addressed.",
-        lenderImplication: 'May affect insurance and loan condition.',
-        codeComplianceNote: 'None noted.',
-      },
-      {
-        issue: "Plumbing requires evaluation",
-        severity: 'moderate',
-        estimatedRepairCost: 1200,
-        estimatedRepairRange: { low: 900, high: 1800 },
-        creditRecommendation: 1000,
-        anchorHighAmount: 1300,
-        consequentialDamageRisk: 'Undetected leaks can cause water damage.',
-        remainingUsefulLife: 'Unknown',
-        repairVsCredit: 'either',
-        sellerScript: "The plumbing system needs evaluation. A credit would be appropriate.",
-        collaborativeScript: "We're open to either a credit or a repair before closing.",
-        nuclearScript: "Any unrepaired defects must be disclosed to future buyers.",
-        lenderImplication: 'None specific',
-        codeComplianceNote: 'None noted.',
-      },
-    ];
-    return {
-      propertyAddress: '',
-      majorDefects: ["Roof needs inspection", "Plumbing requires evaluation"],
-      summaryFindings: "Property requires professional assessment of key systems.",
-      negotiationPoints: ["Request seller credit for material defects", "Negotiate repair allowances"],
-      estimatedCredit: 3000,
-      defectBreakdown: fallbackBreakdown,
-      openingStatement: "Based on the inspection findings, we've identified items requiring attention. We'd like to discuss a credit at closing.",
-      closingStatement: "We believe these credits are fair and allow everyone to move forward.",
-      anchorAmount: 3500,
-      walkawayThreshold: 2100,
-      killShotSummary: '',
-      psychologicalLeverage: [],
-      creativeAlternatives: [],
-      calibratedQuestions: [],
-      accusationAudit: '',
-      walkawayScript: "If anything changes, we're open to revisiting.",
-      nibbleAsks: [],
-      disclosureWarning: '',
-      marketLeverageNotes: 'Use local comps and days on market to reinforce urgency.',
-    };
+}
+
+const FALLBACK_ANALYSIS: AnalysisResult = {
+  propertyAddress: '',
+  majorDefects: ["Roof needs inspection", "Plumbing requires evaluation"],
+  summaryFindings: "Property requires professional assessment of key systems.",
+  negotiationPoints: ["Request seller credit for material defects", "Negotiate repair allowances"],
+  estimatedCredit: 3000,
+  defectBreakdown: [
+    {
+      issue: "Roof needs inspection",
+      severity: 'major',
+      estimatedRepairCost: 2500,
+      estimatedRepairRange: { low: 2000, high: 3500 },
+      creditRecommendation: 2000,
+      anchorHighAmount: 2800,
+      consequentialDamageRisk: 'Leaks can lead to interior water damage and mold.',
+      remainingUsefulLife: 'Limited',
+      repairVsCredit: 'request_credit',
+      sellerScript: "The roof shows signs of wear. We're requesting a credit to address this.",
+      collaborativeScript: "We'd like to work with you on the roof. A credit at closing would let us handle it.",
+      nuclearScript: "This will need to be disclosed to future buyers if not addressed.",
+      lenderImplication: 'May affect insurance and loan condition.',
+      codeComplianceNote: 'None noted.',
+    },
+    {
+      issue: "Plumbing requires evaluation",
+      severity: 'moderate',
+      estimatedRepairCost: 1200,
+      estimatedRepairRange: { low: 900, high: 1800 },
+      creditRecommendation: 1000,
+      anchorHighAmount: 1300,
+      consequentialDamageRisk: 'Undetected leaks can cause water damage.',
+      remainingUsefulLife: 'Unknown',
+      repairVsCredit: 'either',
+      sellerScript: "The plumbing system needs evaluation. A credit would be appropriate.",
+      collaborativeScript: "We're open to either a credit or a repair before closing.",
+      nuclearScript: "Any unrepaired defects must be disclosed to future buyers.",
+      lenderImplication: 'None specific',
+      codeComplianceNote: 'None noted.',
+    },
+  ],
+  openingStatement: "Based on the inspection findings, we've identified items requiring attention. We'd like to discuss a credit at closing.",
+  closingStatement: "We believe these credits are fair and allow everyone to move forward.",
+  anchorAmount: 3500,
+  walkawayThreshold: 2100,
+  killShotSummary: '',
+  psychologicalLeverage: [],
+  creativeAlternatives: [],
+  calibratedQuestions: [],
+  accusationAudit: '',
+  walkawayScript: "If anything changes, we're open to revisiting.",
+  nibbleAsks: [],
+  disclosureWarning: '',
+  marketLeverageNotes: 'Use local comps and days on market to reinforce urgency.',
+};
+
+async function analyzeReport(fileName: string, pdfBuffer: Buffer): Promise<AnalysisResult> {
+  // Vision-first when enabled and the tier allows; otherwise — and on any native
+  // failure (e.g. 429 request-too-large at low tiers) — fall back to text
+  // extraction, which fits low OpenAI rate limits.
+  if (USE_NATIVE_PDF) {
+    try {
+      return normalizeAnalysis(await requestNativePdfAnalysis(fileName, pdfBuffer));
+    } catch (err) {
+      console.error(
+        "Native PDF analysis failed; falling back to text extraction:",
+        (err as { status?: number })?.status,
+        (err as Error)?.message,
+      );
+    }
+  }
+  try {
+    const pdfText = await extractPdfText(pdfBuffer, fileName);
+    return normalizeAnalysis(await requestTextAnalysis(fileName, pdfText));
+  } catch (err) {
+    console.error("AI analysis error:", err);
+    return FALLBACK_ANALYSIS;
   }
 }
 

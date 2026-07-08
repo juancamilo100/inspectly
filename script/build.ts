@@ -21,6 +21,7 @@ const allowlist = [
   "nodemailer",
   "openai",
   "stripe",
+  "unpdf",
   "uuid",
   "ws",
   "xlsx",

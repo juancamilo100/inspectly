@@ -6,7 +6,11 @@
 > 1. Architecture → **Option A: all-in on Vercel** (Express-as-single-function + Vercel Blob uploads + Neon).
 > 2. Sessions → **stateless JWT cookies** (replacing `connect-pg-simple`) — DONE.
 > 3. **Phase 1 (de-Replit cleanup) — DONE.**
-> 4. **Phase 2 (code) — DONE:** JWT auth, Neon HTTP driver, versioned migrations, serverless adapter (`api/index.ts` + `vercel.json`), and Vercel Blob client-upload (which also persists PDFs). `tsc` + `npm run build` green; the built bundle exports `createApp` as a named export. The remaining work is the **manual Vercel/Neon setup in §10** and answering the two open questions there.
+> 4. **Phase 2 (code) — DONE:** JWT auth, Neon HTTP driver, versioned migrations, serverless adapter (`api/index.ts` + `vercel.json`), and Vercel Blob client-upload (which also persists PDFs). `tsc` + `npm run build` green; the built bundle exports `createApp` as a named export.
+> 5. **Database start → FRESH** (no data import) → the one-time baseline is SKIPPED; the first deploy's `db:migrate` creates all tables.
+> 6. **Vercel plan → HOBBY** → no custom `staging` environment; staging is approximated with a pinned `staging` git branch + branch-scoped Preview env vars pointing at a persistent Neon `staging` branch (see §6/§10). `maxDuration` stays 300s (needs Fluid Compute, default-on).
+>
+> Remaining work: the **manual Vercel/Neon setup in §10** (your accounts required).
 
 ---
 
@@ -144,13 +148,13 @@ Tooling: manage via the Vercel dashboard (Settings → Environment Variables) or
 
 ## 6. Staging strategy (the requirement Replit couldn't meet)
 
-Target topology:
+Target topology (Hobby plan — the chosen plan):
 
 - **Production** = `main` branch → Vercel Production environment → Neon `main` DB branch → production secrets.
-- **Staging** = a long-lived `staging` branch → a Vercel **custom environment named "staging"** (or the Preview scope pinned to that branch) → a persistent Neon `staging` DB branch → staging secrets.
-- **Per-PR previews** = every other branch → ephemeral Vercel Preview deploy → **ephemeral Neon branch auto-created and destroyed** by the Neon–Vercel integration → preview secrets.
+- **Staging** = a long-lived `staging` git branch → a Vercel **Preview** deployment → a **persistent, manually-created Neon `staging` branch**. Because Hobby has no custom environments, give staging its own DB by setting **branch-scoped Preview env vars** (`DATABASE_URL`/`DATABASE_URL_UNPOOLED`) pinned to the `staging` branch — these override the integration's auto-injected ephemeral branch for that one branch.
+- **Per-PR previews** = every other branch → ephemeral Vercel Preview deploy → **ephemeral Neon branch auto-created and destroyed** by the Neon–Vercel integration.
 
-This gives full env-var and data isolation per tier — strictly better than Replit's single shared environment. Custom environments are free on Pro/Enterprise.
+This still gives per-tier data + secret isolation. (On **Pro**, the cleaner form is a dedicated custom `staging` environment instead of branch-scoped Preview vars — worth revisiting if you upgrade.)
 
 ---
 
@@ -226,20 +230,20 @@ The Phase 2 code is committed. To actually deploy, do the following in order. Th
 5. ⚠️ `drizzle-kit` is a devDependency and the build runs `db:migrate`. If Vercel sets `NODE_ENV=production` at build time, npm skips devDependencies and `db:migrate` fails. Mitigate with **one** of: override Install Command to `npm install --include=dev`; or change `buildCommand` to `npx --yes drizzle-kit migrate && npm run build`; or move `drizzle-kit` to `dependencies`.
 
 **D. Vercel — environment variables** (Settings → Environment Variables, scoped per environment)
-6. Set `SESSION_SECRET` (unique per env: `openssl rand -base64 32`) and `OPENAI_API_KEY`. `DATABASE_URL` / `DATABASE_URL_UNPOOLED` come from the Neon integration (main → Production, fresh branch → each Preview). For a custom `staging` environment (needs Vercel **Pro**), point them at the Neon `staging` branch.
+6. Set `SESSION_SECRET` (unique per scope: `openssl rand -base64 32`) and `OPENAI_API_KEY` for Production and Preview. `DATABASE_URL` / `DATABASE_URL_UNPOOLED` come from the Neon integration (main → Production; ephemeral branch → each Preview). For **staging on Hobby**: create branch-scoped Preview overrides of `DATABASE_URL`/`DATABASE_URL_UNPOOLED` (and, if you want distinct staging secrets, `SESSION_SECRET`) pinned to the `staging` git branch, pointing at the persistent Neon `staging` branch.
 7. Do NOT set `NODE_ENV` by hand (Vercel manages it; the auth cookie's `secure` flag keys off it). Delete the Replit-era vars: `AI_INTEGRATIONS_OPENAI_API_KEY`, `AI_INTEGRATIONS_OPENAI_BASE_URL`, `PORT`.
 
 **E. Vercel Blob — private store**
 8. Create a Blob store with **private** access (reports are paywalled) and connect it. This injects `BLOB_READ_WRITE_TOKEN` into all environments. `handleUpload()` and `get({access:'private'})` FAIL without it, so every upload 400s until this exists.
 
-**F. Database baseline (CONDITIONAL — see Open Question 1)**
-9. If you IMPORT existing data into Neon `main` (so tables already exist): run `DATABASE_URL_UNPOOLED=<neon main direct URL> npm run db:baseline` ONCE against `main` to record `0000` as applied. Branches copied from `main` inherit the baseline row, so they then apply only `0001+`. If you start **fresh** (no import): SKIP baseline — the first deploy's `db:migrate` runs `0000` (create all tables) then `0001` (add `file_url`). Never run `db:push` against prod/staging/preview.
+**F. Database baseline — SKIP (starting fresh)**
+9. Decision locked: fresh start, no data import → **do not run `db:baseline`**. The first deploy's `npm run db:migrate` runs `0000` (creates all tables) then `0001` (adds `file_url`) against the empty branch. (`db:baseline` only exists for the future case where you restore existing data into a branch that already has the tables.) Never run `db:push` against prod/staging/preview.
 
 **Local dev:** `vercel link` then `vercel env pull .env.local` (pulls `DATABASE_URL`, `BLOB_READ_WRITE_TOKEN`, etc.). Run `npm run dev` (the `!VERCEL` branch listens on `PORT`). `.env.example` documents every variable.
 
-### Two questions I need answered to finish
-1. **Import existing data or start fresh?** "Nothing in production" suggests **fresh** → skip the baseline (step 9). Confirm.
-2. **Vercel Hobby or Pro?** Hobby works (300s `maxDuration`, per-preview Neon branching) but has **no custom `staging` environment**. Pro gives the dedicated `staging` env + up to 800s. The `staging`-branch strategy above assumes Pro.
+### Decisions (answered 2026-07-07)
+1. **Fresh start, no data import** → baseline skipped (step 9).
+2. **Vercel Hobby** → staging via a pinned `staging` git branch + branch-scoped Preview env vars → persistent Neon `staging` branch (steps B/D and §6). `maxDuration` 300s requires Fluid Compute (default-on); confirm it's enabled in step 4.
 
 ### Post-review fixes applied (adversarial review, 2026-07-07)
 A 4-angle adversarial review ran over the Phase 2 diff. Fixed:
